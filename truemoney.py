@@ -36,7 +36,10 @@ class TrueMoneyClient:
 
         status = data.get("status", {}).get("code", "")
         if status == "SUCCESS":
-            amount = float(data["data"]["my_ticket"]["amount_baht"])
+            try:
+                amount = float(data["data"]["my_ticket"]["amount_baht"])
+            except (KeyError, TypeError, ValueError):
+                return {"success": False, "amount": 0, "raw": data}
             return {"success": True, "amount": amount, "raw": data}
         return {"success": False, "amount": 0, "raw": data}
 
