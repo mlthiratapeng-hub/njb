@@ -5,7 +5,8 @@ import re
 from bs4 import BeautifulSoup
 from config import (
     PROXY_SOURCE_URL, PROXY_UPDATE_INTERVAL,
-    PROXY_CACHE_FILE, PROXY_ATTACK_FILE, PROXIES_PER_DEVICE,
+    PROXY_CACHE_FILE, PROXIES_PER_DEVICE,
+    proxy_attack_file,
 )
 
 
@@ -73,16 +74,21 @@ class ProxyManager:
             self._save_cache(good)
         return good
 
-    def write_for_devices(self, devices: int) -> int:
-        """เขียนไฟล์ proxy สำหรับ MHDDoS — ไม่ทับ cache"""
+    def write_for_devices(self, user_id: int, devices: int) -> int:
+        """
+        C6: เขียนไฟล์ proxy แยกตาม user_id
+        C7: คืน 0 ถ้าไม่มี proxy เลย → caller ต้องเช็ค
+        """
         need = max(PROXIES_PER_DEVICE, devices * PROXIES_PER_DEVICE)
         pool = self.proxies or self._load_cache()
+        if not pool:
+            return 0
         selected = pool[:need]
         try:
-            with open(PROXY_ATTACK_FILE, "w") as f:
+            with open(proxy_attack_file(user_id), "w") as f:
                 f.write("\n".join(selected))
         except OSError:
-            pass
+            return 0
         return len(selected)
 
     def _save_cache(self, proxies: list[str]):
