@@ -1,12 +1,16 @@
 # proxy_manager.py
 import asyncio
-import aiohttp
 import re
+import aiohttp
 from bs4 import BeautifulSoup
 from config import (
     PROXY_SOURCE_URL, PROXY_UPDATE_INTERVAL,
-    PROXY_CACHE_FILE, PROXIES_PER_DEVICE,
-    proxy_attack_file,
+    PROXY_CACHE_FILE, PROXIES_PER_DEVICE, proxy_attack_file,
+)
+
+_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 )
 
 
@@ -16,15 +20,8 @@ class ProxyManager:
         self._lock = asyncio.Lock()
 
     async def fetch(self) -> list[str]:
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0 Safari/537.36"
-            )
-        }
         try:
-            async with aiohttp.ClientSession(headers=headers) as s:
+            async with aiohttp.ClientSession(headers={"User-Agent": _UA}) as s:
                 async with s.get(PROXY_SOURCE_URL, timeout=20) as r:
                     html = await r.text()
         except Exception:
@@ -35,7 +32,11 @@ class ProxyManager:
         for row in soup.find_all("tr"):
             cols = [td.get_text(strip=True) for td in row.find_all("td")]
             if len(cols) >= 2 and re.match(r"^\d{1,3}(\.\d{1,3}){3}$", cols[0]):
-                found.append(f"{cols[0]}:{cols[1]}")
+                try:
+                    if 1 <= int(cols[1]) <= 65535:
+                        found.append(f"{cols[0]}:{cols[1]}")
+                except ValueError:
+                    pass
 
         if found:
             self.proxies = found
@@ -76,8 +77,8 @@ class ProxyManager:
 
     def write_for_devices(self, user_id: int, devices: int) -> int:
         """
-        C6: เขียนไฟล์ proxy แยกตาม user_id
-        C7: คืน 0 ถ้าไม่มี proxy เลย → caller ต้องเช็ค
+        เขียน proxy ลงไฟล์แยกตาม user_id
+        คืนจำนวน proxy ที่เขียน (0 = ไม่มี → caller ต้องแจ้ง user)
         """
         need = max(PROXIES_PER_DEVICE, devices * PROXIES_PER_DEVICE)
         pool = self.proxies or self._load_cache()
@@ -109,6 +110,8 @@ class ProxyManager:
         while True:
             try:
                 await self.refresh_and_validate()
+            except asyncio.CancelledError:
+                raise
             except Exception:
                 pass
             await asyncio.sleep(PROXY_UPDATE_INTERVAL)
