@@ -1,15 +1,11 @@
 # proxy_manager.py
-"""
-ดึง proxy ฟรีจาก proxy5.net/th/free-proxy/thailand
-+ ตรวจสอบว่ายังใช้ได้ + cache ลงไฟล์
-"""
 import asyncio
 import aiohttp
 import re
 from bs4 import BeautifulSoup
 from config import (
     PROXY_SOURCE_URL, PROXY_UPDATE_INTERVAL,
-    PROXY_CACHE_FILE, PROXIES_PER_DEVICE,
+    PROXY_CACHE_FILE, PROXY_ATTACK_FILE, PROXIES_PER_DEVICE,
 )
 
 
@@ -35,7 +31,6 @@ class ProxyManager:
 
         soup = BeautifulSoup(html, "html.parser")
         found: list[str] = []
-        # proxy5 table: <td>IP</td><td>PORT</td>...
         for row in soup.find_all("tr"):
             cols = [td.get_text(strip=True) for td in row.find_all("td")]
             if len(cols) >= 2 and re.match(r"^\d{1,3}(\.\d{1,3}){3}$", cols[0]):
@@ -78,13 +73,16 @@ class ProxyManager:
             self._save_cache(good)
         return good
 
-    def write_for_devices(self, devices: int):
-        """เขียน proxy ลงไฟล์ตามจำนวน device"""
+    def write_for_devices(self, devices: int) -> int:
+        """เขียนไฟล์ proxy สำหรับ MHDDoS — ไม่ทับ cache"""
         need = max(PROXIES_PER_DEVICE, devices * PROXIES_PER_DEVICE)
         pool = self.proxies or self._load_cache()
         selected = pool[:need]
-        with open(PROXY_CACHE_FILE, "w") as f:
-            f.write("\n".join(selected))
+        try:
+            with open(PROXY_ATTACK_FILE, "w") as f:
+                f.write("\n".join(selected))
+        except OSError:
+            pass
         return len(selected)
 
     def _save_cache(self, proxies: list[str]):
