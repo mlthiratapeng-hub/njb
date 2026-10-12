@@ -13,16 +13,16 @@ LOG_CHANNEL_ID = 1557064238940299376
 TRUEMONEY_PHONE = "0837751528"
 TRUEMONEY_API_KEY = os.getenv("TM_API_KEY", "")
 
-# MHDDoS — absolute path เพื่อให้ทำงานได้ทุก cwd
+# MHDDoS — absolute path
 MHDDOS_PATH = os.getenv("MHDDOS_PATH", "start.py")
 MHDDOS_FULL = os.path.join(BASE_DIR, MHDDOS_PATH)
 MHDDOS_DIR  = os.path.dirname(MHDDOS_FULL)
 
 # Proxy
-PROXY_SOURCE_URL     = "https://proxy5.net/th/free-proxy/thailand"
+PROXY_SOURCE_URL      = "https://proxy5.net/th/free-proxy/thailand"
 PROXY_UPDATE_INTERVAL = 1800
-PROXY_CACHE_FILE     = os.path.join(BASE_DIR, "data", "proxies_cache.txt")
-PROXIES_PER_DEVICE   = 5
+PROXY_CACHE_FILE      = os.path.join(BASE_DIR, "data", "proxies_cache.txt")
+PROXIES_PER_DEVICE    = 5
 
 
 def proxy_attack_file(user_id: int) -> str:
@@ -42,7 +42,7 @@ FORBIDDEN_IPS  = ["127.0.0.1", "localhost", "0.0.0.0"]
 # Warning
 MAX_WARNINGS = 3
 
-# Emojis — animated emoji (<a:...) ต้องคงไว้ ห้ามลบ
+# Emojis — animated (<a:...) ต้องคงไว้ ห้ามลบ
 EMOJI_DDOS_HEADER   = "<a:1000035910:1559173862820810803>"
 EMOJI_CONTACT       = "<:1000035915:1559174417097953340>"
 EMOJI_SHOP_HEADER   = "<:1000035915:1559174417097953340>"
