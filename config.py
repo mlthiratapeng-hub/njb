@@ -1,7 +1,10 @@
 # config.py
 import os
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "ใส่_TOKEN_บอทตรงนี้")
+# ── base path (ใช้คำนวณ path สัมพัทธ์ให้ปลอดภัยจาก cwd) ──
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 PREFIX = "!"
 
 OWNER_ID = 1488103702488154173
@@ -13,12 +16,13 @@ TRUEMONEY_API_KEY = os.getenv("TM_API_KEY", "")
 
 # MHDDoS — start.py อยู่โฟลเดอร์เดียวกับ bot.py
 MHDDOS_PATH = os.getenv("MHDDOS_PATH", "start.py")
+MHDDOS_FULL = os.path.join(BASE_DIR, MHDDOS_PATH)   # H1: absolute path
 
 # Proxy
 PROXY_SOURCE_URL = "https://proxy5.net/th/free-proxy/thailand"
 PROXY_UPDATE_INTERVAL = 1800
-PROXY_CACHE_FILE = "data/proxies_cache.txt"
-PROXY_ATTACK_FILE = "data/proxies_attack.txt"
+PROXY_CACHE_FILE  = os.path.join(BASE_DIR, "data/proxies_cache.txt")
+PROXY_ATTACK_FILE = os.path.join(BASE_DIR, "data/proxies_attack.txt")
 PROXIES_PER_DEVICE = 5
 
 # Attack limits
@@ -28,7 +32,7 @@ MAX_DEVICES_PURCHASE = 5
 
 # Forbidden targets
 FORBIDDEN_TLDS = [".th", ".gov"]
-FORBIDDEN_IPS = ["127.0.0.1", "localhost", "0.0.0.0"]
+FORBIDDEN_IPS  = ["127.0.0.1", "localhost", "0.0.0.0"]
 
 # Warning
 MAX_WARNINGS = 3
