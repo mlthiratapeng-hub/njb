@@ -1,0 +1,110 @@
+# proxy_manager.py
+"""
+ดึง proxy ฟรีจาก proxy5.net/th/free-proxy/thailand
++ ตรวจสอบว่ายังใช้ได้ + cache ลงไฟล์
+"""
+import asyncio
+import aiohttp
+import re
+from bs4 import BeautifulSoup
+from config import (
+    PROXY_SOURCE_URL, PROXY_UPDATE_INTERVAL,
+    PROXY_CACHE_FILE, PROXIES_PER_DEVICE,
+)
+
+
+class ProxyManager:
+    def __init__(self):
+        self.proxies: list[str] = []
+        self._lock = asyncio.Lock()
+
+    async def fetch(self) -> list[str]:
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0 Safari/537.36"
+            )
+        }
+        try:
+            async with aiohttp.ClientSession(headers=headers) as s:
+                async with s.get(PROXY_SOURCE_URL, timeout=20) as r:
+                    html = await r.text()
+        except Exception:
+            return self._load_cache()
+
+        soup = BeautifulSoup(html, "html.parser")
+        found: list[str] = []
+        # proxy5 table: <td>IP</td><td>PORT</td>...
+        for row in soup.find_all("tr"):
+            cols = [td.get_text(strip=True) for td in row.find_all("td")]
+            if len(cols) >= 2 and re.match(r"^\d{1,3}(\.\d{1,3}){3}$", cols[0]):
+                found.append(f"{cols[0]}:{cols[1]}")
+
+        if found:
+            self.proxies = found
+            self._save_cache(found)
+        else:
+            self.proxies = self._load_cache()
+        return self.proxies
+
+    async def validate(self, proxy: str, timeout: int = 5) -> bool:
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(
+                    "http://httpbin.org/ip",
+                    proxy=f"http://{proxy}",
+                    timeout=timeout,
+                ) as r:
+                    return r.status == 200
+        except Exception:
+            return False
+
+    async def refresh_and_validate(self):
+        raw = await self.fetch()
+        if not raw:
+            return []
+        sem = asyncio.Semaphore(50)
+        good: list[str] = []
+
+        async def check(p):
+            async with sem:
+                if await self.validate(p):
+                    good.append(p)
+
+        await asyncio.gather(*(check(p) for p in raw[:500]))
+        async with self._lock:
+            self.proxies = good
+            self._save_cache(good)
+        return good
+
+    def write_for_devices(self, devices: int):
+        """เขียน proxy ลงไฟล์ตามจำนวน device"""
+        need = max(PROXIES_PER_DEVICE, devices * PROXIES_PER_DEVICE)
+        pool = self.proxies or self._load_cache()
+        selected = pool[:need]
+        with open(PROXY_CACHE_FILE, "w") as f:
+            f.write("\n".join(selected))
+        return len(selected)
+
+    def _save_cache(self, proxies: list[str]):
+        try:
+            with open(PROXY_CACHE_FILE, "w") as f:
+                f.write("\n".join(proxies))
+        except OSError:
+            pass
+
+    def _load_cache(self) -> list[str]:
+        try:
+            with open(PROXY_CACHE_FILE) as f:
+                return [l.strip() for l in f if l.strip()]
+        except OSError:
+            return []
+
+    async def auto_refresh_loop(self):
+        while True:
+            try:
+                await self.refresh_and_validate()
+            except Exception:
+                pass
+            await asyncio.sleep(PROXY_UPDATE_INTERVAL)
