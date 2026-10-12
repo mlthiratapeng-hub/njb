@@ -7,6 +7,12 @@ from config import (
     EMOJI_SHOP_HEADER,
 )
 
+# ── M4: ใช้ local file แทน CDN url (CDN expiry 24h) ──
+# วางไฟล์รูปที่ assets/attack_banner.jpg กับ assets/attack_running.jpg
+ASSET_ATTACK_BANNER  = "assets/attack_banner.jpg"
+ASSET_ATTACK_RUNNING = "assets/attack_running.jpg"
+ASSET_SHOP_BANNER    = "assets/shop_banner.jpg"
+
 
 # ============================================================
 # Modal: Target / Port / Time / Device
@@ -107,7 +113,7 @@ class ModuleSelect(discord.ui.Select):
 class ModuleView(discord.ui.View):
     def __init__(self, user_id: int, target: str, port: int,
                  duration: int, devices: int):
-        super().__init__(timeout=120)
+        super().__init__(timeout=600)   # H6: 10 นาที
         self.add_item(ModuleSelect(user_id, target, port, duration, devices))
 
 
@@ -137,10 +143,7 @@ def build_attack_embed() -> discord.Embed:
             f"หากจะยิงอะไรต่างๆโปรดเลือก Module ให้ถูก {EMOJI_MODULE}"
         ),
     )
-    em.set_image(url=(
-        "https://cdn.discordapp.com/attachments/1490346694813024276/"
-        "1559280040913412126/ef8e34b79db57b50c3c29471d10c4eef.jpg"
-    ))
+    em.set_image(url=f"attachment://{ASSET_ATTACK_BANNER.split('/')[-1]}")
     return em
 
 
@@ -171,10 +174,7 @@ def build_attack_running_embed(target: str, time_left: int,
             f"**MODULE:** `{module}`"
         ),
     )
-    em.set_image(url=(
-        "https://cdn.discordapp.com/attachments/1490346694813024276/"
-        "1559285773822591076/137316d06f5fe8f5a2b243c67919345f.jpg"
-    ))
+    em.set_image(url=f"attachment://{ASSET_ATTACK_RUNNING.split('/')[-1]}")
     return em
 
 
@@ -201,6 +201,11 @@ class ShopView(discord.ui.View):
                             button: discord.ui.Button):
         from bot import db
         user = await db.get_user(interaction.user.id)
+        if not user:
+            await interaction.response.send_message(
+                "DB error", ephemeral=True
+            )
+            return
         await interaction.response.send_message(
             f"💰 มี **{user['balance']:.0f}💵**\n"
             f"เคยเติมรวม **{user['total_deposited']:.0f}💵**\n"
@@ -222,10 +227,7 @@ def build_shop_embed() -> discord.Embed:
         color=discord.Color.dark_grey(),
         description="**เช่าDevice-ซื้อDevice** กดด้านล่างเลยยย",
     )
-    em.set_image(url=(
-        "https://cdn.discordapp.com/attachments/1488557048223240385/"
-        "1559290014599356456/f46e696a0ba181d510bc753b87f916ab.jpg"
-    ))
+    em.set_image(url=f"attachment://{ASSET_SHOP_BANNER.split('/')[-1]}")
     return em
 
 
