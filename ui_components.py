@@ -1,21 +1,22 @@
 # ui_components.py
+import os
 import discord
 from discord import PartialEmoji
 from config import (
+    BASE_DIR,
     EMOJI_DDOS_HEADER, EMOJI_CONTACT, EMOJI_RULES, EMOJI_ALLOWED,
     EMOJI_BULLET, EMOJI_MODULE, EMOJI_CHOOSE_MODULE, EMOJI_PICK,
     EMOJI_SHOP_HEADER,
 )
 
-# ── M4: ใช้ local file แทน CDN url (CDN expiry 24h) ──
-# วางไฟล์รูปที่ assets/attack_banner.jpg กับ assets/attack_running.jpg
-ASSET_ATTACK_BANNER  = "assets/attack_banner.jpg"
-ASSET_ATTACK_RUNNING = "assets/attack_running.jpg"
-ASSET_SHOP_BANNER    = "assets/shop_banner.jpg"
+# H8: absolute path
+ASSET_ATTACK_BANNER  = os.path.join(BASE_DIR, "assets", "attack_banner.jpg")
+ASSET_ATTACK_RUNNING = os.path.join(BASE_DIR, "assets", "attack_running.jpg")
+ASSET_SHOP_BANNER    = os.path.join(BASE_DIR, "assets", "shop_banner.jpg")
 
 
 # ============================================================
-# Modal: Target / Port / Time / Device
+# Modal: Attack
 # ============================================================
 class AttackModal(discord.ui.Modal, title="DDOS ATTACK"):
     target = discord.ui.TextInput(
@@ -57,7 +58,7 @@ class TopupModal(discord.ui.Modal, title="เติมเงิน"):
 
 
 # ============================================================
-# ปุ่มขอ Device (ขาว)
+# ปุ่มขอ Device
 # ============================================================
 class DeviceRequestButton(discord.ui.Button):
     def __init__(self, allowed_user_id: int):
@@ -105,6 +106,11 @@ class ModuleSelect(discord.ui.Select):
                 "ไม่ใช่คำสั่งของมึง", ephemeral=True
             )
             return
+        # M6: เคลียร์ view ก่อน — ต้องทำก่อน start_attack (defer)
+        try:
+            await interaction.message.edit(view=None)
+        except discord.HTTPException:
+            pass
         from bot import start_attack
         await start_attack(interaction, self.values[0], self.target,
                            self.port, self.duration, self.devices)
@@ -113,7 +119,7 @@ class ModuleSelect(discord.ui.Select):
 class ModuleView(discord.ui.View):
     def __init__(self, user_id: int, target: str, port: int,
                  duration: int, devices: int):
-        super().__init__(timeout=600)   # H6: 10 นาที
+        super().__init__(timeout=600)
         self.add_item(ModuleSelect(user_id, target, port, duration, devices))
 
 
@@ -126,7 +132,8 @@ class AttackPanel(discord.ui.View):
         self.add_item(DeviceRequestButton(allowed_user_id))
 
 
-def build_attack_embed() -> discord.Embed:
+# ── H7: with_image param ──
+def build_attack_embed(with_image: bool = True) -> discord.Embed:
     em = discord.Embed(
         title=f"{EMOJI_DDOS_HEADER} DDOS ATTACK",
         color=discord.Color.pink(),
@@ -143,7 +150,8 @@ def build_attack_embed() -> discord.Embed:
             f"หากจะยิงอะไรต่างๆโปรดเลือก Module ให้ถูก {EMOJI_MODULE}"
         ),
     )
-    em.set_image(url=f"attachment://{ASSET_ATTACK_BANNER.split('/')[-1]}")
+    if with_image:
+        em.set_image(url="attachment://attack_banner.jpg")
     return em
 
 
@@ -163,7 +171,8 @@ def build_module_embed() -> discord.Embed:
 
 
 def build_attack_running_embed(target: str, time_left: int,
-                               speed: str, module: str) -> discord.Embed:
+                               speed: str, module: str,
+                               with_image: bool = True) -> discord.Embed:
     em = discord.Embed(
         title=f"{EMOJI_PICK} DDOS ATTACK",
         color=discord.Color.pink(),
@@ -174,7 +183,8 @@ def build_attack_running_embed(target: str, time_left: int,
             f"**MODULE:** `{module}`"
         ),
     )
-    em.set_image(url=f"attachment://{ASSET_ATTACK_RUNNING.split('/')[-1]}")
+    if with_image:
+        em.set_image(url="attachment://attack_running.jpg")
     return em
 
 
@@ -221,13 +231,14 @@ class ShopView(discord.ui.View):
         await interaction.response.send_modal(TopupModal())
 
 
-def build_shop_embed() -> discord.Embed:
+def build_shop_embed(with_image: bool = True) -> discord.Embed:
     em = discord.Embed(
         title=f"{EMOJI_SHOP_HEADER} ซื้อยศ",
         color=discord.Color.dark_grey(),
         description="**เช่าDevice-ซื้อDevice** กดด้านล่างเลยยย",
     )
-    em.set_image(url=f"attachment://{ASSET_SHOP_BANNER.split('/')[-1]}")
+    if with_image:
+        em.set_image(url="attachment://shop_banner.jpg")
     return em
 
 
