@@ -1,12 +1,16 @@
 # ui_components.py
 import discord
+from discord import PartialEmoji
 from config import (
     EMOJI_DDOS_HEADER, EMOJI_CONTACT, EMOJI_RULES, EMOJI_ALLOWED,
-    EMOJI_BULLET, EMOJI_MODULE, EMOJI_CHOOSE_MODULE, EMOJI_PICK, EMOJI_SHOP,
+    EMOJI_BULLET, EMOJI_MODULE, EMOJI_CHOOSE_MODULE, EMOJI_PICK,
+    EMOJI_SHOP_HEADER,
 )
 
 
-# ---------- Modal: Target / Port / Time ----------
+# ============================================================
+# Modal: Target / Port / Time / Device
+# ============================================================
 class AttackModal(discord.ui.Modal, title="DDOS ATTACK"):
     target = discord.ui.TextInput(
         label="Target IP / URL",
@@ -14,19 +18,16 @@ class AttackModal(discord.ui.Modal, title="DDOS ATTACK"):
         required=True, max_length=200,
     )
     port = discord.ui.TextInput(
-        label="Port",
-        placeholder="80 / 443 / 25565",
+        label="Port", placeholder="80 / 443 / 25565",
         required=True, max_length=5,
     )
     duration = discord.ui.TextInput(
         label="Time Limit (วินาที, สูงสุด 300)",
-        placeholder="300",
-        required=True, max_length=3,
+        placeholder="300", required=True, max_length=3,
     )
     device = discord.ui.TextInput(
         label="Device (จำนวนเครื่องที่ใช้)",
-        placeholder="1",
-        required=True, max_length=2,
+        placeholder="1", required=True, max_length=2,
     )
 
     async def on_submit(self, interaction: discord.Interaction):
@@ -34,14 +35,31 @@ class AttackModal(discord.ui.Modal, title="DDOS ATTACK"):
         await handle_attack_submit(interaction, self)
 
 
-# ---------- ปุ่มขอ Device (ขาว) ----------
+# ============================================================
+# Modal: Topup
+# ============================================================
+class TopupModal(discord.ui.Modal, title="เติมเงิน"):
+    link = discord.ui.TextInput(
+        label="ลิงก์ซองทรูมันนี่",
+        placeholder="https://gift.truemoney.com/campaign/?v=...",
+        required=True, max_length=300,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        from bot import process_topup
+        await process_topup(interaction, self.link.value)
+
+
+# ============================================================
+# ปุ่มขอ Device (ขาว)
+# ============================================================
 class DeviceRequestButton(discord.ui.Button):
     def __init__(self, allowed_user_id: int):
         super().__init__(
             label="ขอ Device",
-            style=discord.ButtonStyle.secondary,  # ขาว
+            style=discord.ButtonStyle.secondary,
             custom_id="device_request",
-            emoji=EMOJI_PICK.split(":")[0] if EMOJI_PICK else None,
+            emoji=PartialEmoji.from_str(EMOJI_PICK),
         )
         self.allowed_user_id = allowed_user_id
 
@@ -54,17 +72,21 @@ class DeviceRequestButton(discord.ui.Button):
         await interaction.response.send_modal(AttackModal())
 
 
-# ---------- Select: Module ----------
+# ============================================================
+# Module select + view
+# ============================================================
 class ModuleSelect(discord.ui.Select):
-    def __init__(self, user_id: int, target: str, port: int, duration: int, devices: int):
+    def __init__(self, user_id: int, target: str, port: int,
+                 duration: int, devices: int):
         options = [
-            discord.SelectOption(label="มายคราฟ",       value="minecraft", emoji="⛏️"),
-            discord.SelectOption(label="โรบอค",          value="roblox",    emoji="🎮"),
-            discord.SelectOption(label="ห้องเสียงดิส",   value="discord",   emoji="🔊"),
-            discord.SelectOption(label="ยิงเว็บ",        value="web",       emoji="🌐"),
-            discord.SelectOption(label="ฟีฟาย",         value="fivem",     emoji="🚔"),
+            discord.SelectOption(label="มายคราฟ",     value="minecraft", emoji="⛏️"),
+            discord.SelectOption(label="โรบอค",        value="roblox",    emoji="🎮"),
+            discord.SelectOption(label="ห้องเสียงดิส", value="discord",   emoji="🔊"),
+            discord.SelectOption(label="ยิงเว็บ",      value="web",       emoji="🌐"),
+            discord.SelectOption(label="ฟีฟาย",       value="fivem",     emoji="🚔"),
         ]
-        super().__init__(placeholder="เลือกโมดูล", options=options, custom_id="module_select")
+        super().__init__(placeholder="เลือกโมดูล", options=options,
+                         custom_id="module_select")
         self.user_id = user_id
         self.target = target
         self.port = port
@@ -73,21 +95,25 @@ class ModuleSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         if interaction.user.id != self.user_id:
-            await interaction.response.send_message("ไม่ใช่คำสั่งของมึง", ephemeral=True)
+            await interaction.response.send_message(
+                "ไม่ใช่คำสั่งของมึง", ephemeral=True
+            )
             return
         from bot import start_attack
-        await start_attack(interaction, self.values[0], self.target, self.port,
-                           self.duration, self.devices)
+        await start_attack(interaction, self.values[0], self.target,
+                           self.port, self.duration, self.devices)
 
 
-# ---------- View: Module ----------
 class ModuleView(discord.ui.View):
-    def __init__(self, user_id: int, target: str, port: int, duration: int, devices: int):
+    def __init__(self, user_id: int, target: str, port: int,
+                 duration: int, devices: int):
         super().__init__(timeout=120)
         self.add_item(ModuleSelect(user_id, target, port, duration, devices))
 
 
-# ---------- View: Attack panel ----------
+# ============================================================
+# Attack panel (persistent)
+# ============================================================
 class AttackPanel(discord.ui.View):
     def __init__(self, allowed_user_id: int):
         super().__init__(timeout=None)
@@ -111,12 +137,15 @@ def build_attack_embed() -> discord.Embed:
             f"หากจะยิงอะไรต่างๆโปรดเลือก Module ให้ถูก {EMOJI_MODULE}"
         ),
     )
-    em.set_image(url="https://cdn.discordapp.com/attachments/1490346694813024276/1559280040913412126/ef8e34b79db57b50c3c29471d10c4eef.jpg")
+    em.set_image(url=(
+        "https://cdn.discordapp.com/attachments/1490346694813024276/"
+        "1559280040913412126/ef8e34b79db57b50c3c29471d10c4eef.jpg"
+    ))
     return em
 
 
 def build_module_embed() -> discord.Embed:
-    em = discord.Embed(
+    return discord.Embed(
         title=f"{EMOJI_CHOOSE_MODULE} เลือกโมดูล",
         color=discord.Color.blurple(),
         description=(
@@ -128,11 +157,10 @@ def build_module_embed() -> discord.Embed:
             "5. ฟีฟาย"
         ),
     )
-    return em
 
 
-def build_attack_running_embed(target: str, time_left: int, speed: str,
-                                module: str) -> discord.Embed:
+def build_attack_running_embed(target: str, time_left: int,
+                               speed: str, module: str) -> discord.Embed:
     em = discord.Embed(
         title=f"{EMOJI_PICK} DDOS ATTACK",
         color=discord.Color.pink(),
@@ -143,48 +171,73 @@ def build_attack_running_embed(target: str, time_left: int, speed: str,
             f"**MODULE:** `{module}`"
         ),
     )
-    em.set_image(url="https://cdn.discordapp.com/attachments/1490346694813024276/1559285773822591076/137316d06f5fe8f5a2b243c67919345f.jpg")
+    em.set_image(url=(
+        "https://cdn.discordapp.com/attachments/1490346694813024276/"
+        "1559285773822591076/137316d06f5fe8f5a2b243c67919345f.jpg"
+    ))
     return em
 
 
-# ---------- Shop ----------
+# ============================================================
+# Shop
+# ============================================================
 class ShopView(discord.ui.View):
     def __init__(self):
-        super().__init__(timeout=300)
-        self.add_item(discord.ui.Button(
-            label="เช่า-ซื้อDevice", style=discord.ButtonStyle.primary,
-            custom_id="shop_buy_device",
-        ))
-        self.add_item(discord.ui.Button(
-            label="เช็คเงิน", style=discord.ButtonStyle.secondary,
-            custom_id="shop_check_balance",
-        ))
-        self.add_item(discord.ui.Button(
-            label="เติมตัง", style=discord.ButtonStyle.success,
-            custom_id="shop_topup",
-        ))
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="เช่า-ซื้อDevice",
+                       style=discord.ButtonStyle.primary,
+                       custom_id="shop_buy_device")
+    async def buy_device(self, interaction: discord.Interaction,
+                         button: discord.ui.Button):
+        await interaction.response.send_message(
+            "เลือกประเภท:", view=DeviceTypeView(), ephemeral=True
+        )
+
+    @discord.ui.button(label="เช็คเงิน",
+                       style=discord.ButtonStyle.secondary,
+                       custom_id="shop_check_balance")
+    async def check_balance(self, interaction: discord.Interaction,
+                            button: discord.ui.Button):
+        from bot import db
+        user = await db.get_user(interaction.user.id)
+        await interaction.response.send_message(
+            f"💰 มี **{user['balance']:.0f}💵**\n"
+            f"เคยเติมรวม **{user['total_deposited']:.0f}💵**\n"
+            f"Device: **{user['devices']}** เครื่อง",
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="เติมตัง",
+                       style=discord.ButtonStyle.success,
+                       custom_id="shop_topup")
+    async def topup(self, interaction: discord.Interaction,
+                    button: discord.ui.Button):
+        await interaction.response.send_modal(TopupModal())
 
 
 def build_shop_embed() -> discord.Embed:
     em = discord.Embed(
-        title=f"{EMOJI_SHOP} ซื้อยศ",
+        title=f"{EMOJI_SHOP_HEADER} ซื้อยศ",
         color=discord.Color.dark_grey(),
-        description=(
-            "**เช่าDevice-ซื้อDevice** กดด้านล่างเลยยย"
-        ),
+        description="**เช่าDevice-ซื้อDevice** กดด้านล่างเลยยย",
     )
-    em.set_image(url="https://cdn.discordapp.com/attachments/1488557048223240385/1559290014599356456/f46e696a0ba181d510bc753b87f916ab.jpg")
+    em.set_image(url=(
+        "https://cdn.discordapp.com/attachments/1488557048223240385/"
+        "1559290014599356456/f46e696a0ba181d510bc753b87f916ab.jpg"
+    ))
     return em
 
 
-# ---------- Shop: Device type ----------
+# ---------- Device type ----------
 class DeviceTypeSelect(discord.ui.Select):
     def __init__(self):
         options = [
             discord.SelectOption(label="เช่า Device", value="rent"),
             discord.SelectOption(label="ซื้อ Device", value="buy"),
         ]
-        super().__init__(placeholder="เลือกประเภท", options=options, custom_id="device_type")
+        super().__init__(placeholder="เลือกประเภท", options=options,
+                         custom_id="device_type")
 
     async def callback(self, interaction: discord.Interaction):
         from bot import shop_device_type_selected
@@ -197,7 +250,7 @@ class DeviceTypeView(discord.ui.View):
         self.add_item(DeviceTypeSelect())
 
 
-# ---------- Shop: Quantity ----------
+# ---------- Prices ----------
 RENT_PRICES = {
     "1h": {1: 10, 2: 15, 3: 20, 4: 25, 5: 30},
     "1d": {1: 15, 2: 20, 3: 25, 4: 30, 5: 35},
@@ -206,28 +259,32 @@ RENT_PRICES = {
 }
 BUY_PRICES = {1: 100, 2: 190, 3: 280, 4: 370, 5: 460}
 
+RENT_SECONDS = {
+    "1h": 3600,
+    "1d": 86400,
+    "3d": 3 * 86400,
+    "7d": 7 * 86400,
+}
+
 
 class QuantitySelect(discord.ui.Select):
     def __init__(self, mode: str, period: str | None = None):
         self.mode = mode
         self.period = period
         if mode == "rent":
-            labels = [
-                ("1 Device", 1), ("2 Device", 2), ("3 Device", 3),
-                ("4 Device", 4), ("5 Device", 5),
-            ]
+            labels = [(f"{i} Device", i) for i in range(1, 6)]
         else:
-            labels = [
-                ("ซื้อ 1 Device", 1), ("ซื้อ 2 Device", 2), ("ซื้อ 3 Device", 3),
-                ("ซื้อ 4 Device", 4), ("ซื้อ 5 Device", 5),
-            ]
-        options = [discord.SelectOption(label=l, value=str(v)) for l, v in labels]
-        super().__init__(placeholder="เลือกจำนวน", options=options, custom_id="qty")
+            labels = [(f"ซื้อ {i} Device", i) for i in range(1, 6)]
+        options = [discord.SelectOption(label=l, value=str(v))
+                   for l, v in labels]
+        super().__init__(placeholder="เลือกจำนวน", options=options,
+                         custom_id=f"qty_{mode}")
 
     async def callback(self, interaction: discord.Interaction):
         from bot import shop_quantity_selected
-        qty = int(self.values[0])
-        await shop_quantity_selected(interaction, self.mode, self.period, qty)
+        await shop_quantity_selected(
+            interaction, self.mode, self.period, int(self.values[0])
+        )
 
 
 class QuantityView(discord.ui.View):
@@ -240,11 +297,12 @@ class PeriodSelect(discord.ui.Select):
     def __init__(self):
         options = [
             discord.SelectOption(label="ยศทดลอง 1 ชม", value="1h"),
-            discord.SelectOption(label="เช่า 1วัน",       value="1d"),
-            discord.SelectOption(label="เช่า 3วัน",       value="3d"),
-            discord.SelectOption(label="เช่า 7วัน",       value="7d"),
+            discord.SelectOption(label="เช่า 1วัน",     value="1d"),
+            discord.SelectOption(label="เช่า 3วัน",     value="3d"),
+            discord.SelectOption(label="เช่า 7วัน",     value="7d"),
         ]
-        super().__init__(placeholder="เลือกระยะเวลา", options=options, custom_id="period")
+        super().__init__(placeholder="เลือกระยะเวลา", options=options,
+                         custom_id="period")
 
     async def callback(self, interaction: discord.Interaction):
         from bot import shop_period_selected
