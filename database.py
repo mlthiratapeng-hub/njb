@@ -4,12 +4,16 @@ import time
 import aiosqlite
 from config import BASE_DIR
 
-# C5: absolute path — ไม่ขึ้นกับ cwd
 DB_PATH = os.path.join(BASE_DIR, "data", "bot.db")
+
+# Whitelist field ที่อนุญาตให้ update — กัน SQL injection / typo
+_ALLOWED_USER_FIELDS = {
+    "balance", "devices", "warnings", "banned", "total_deposited",
+}
 
 
 class Database:
-    def __init__(self, path=DB_PATH):
+    def __init__(self, path: str = DB_PATH):
         self.path = path
 
     async def init(self):
@@ -75,6 +79,9 @@ class Database:
     async def update_user(self, user_id: int, **kwargs):
         if not kwargs:
             return
+        for k in kwargs:
+            if k not in _ALLOWED_USER_FIELDS:
+                raise ValueError(f"invalid field: {k}")
         await self.get_user(user_id)
         fields = ", ".join(f"{k} = ?" for k in kwargs)
         values = list(kwargs.values()) + [user_id]
@@ -126,7 +133,7 @@ class Database:
             await db.commit()
 
     async def clear_rentals(self, user_id: int, amount: int):
-        """H3: ลด device ใน rental record เมื่อ owner ใช้ !device -N"""
+        """ลด rental record เมื่อ owner ใช้ !device -N"""
         async with aiosqlite.connect(self.path) as db:
             await db.execute(
                 "UPDATE device_rentals SET devices = MAX(0, devices - ?) "
