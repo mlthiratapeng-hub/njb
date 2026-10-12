@@ -1,6 +1,6 @@
 # database.py
 import aiosqlite
-from datetime import datetime, timedelta
+import time
 
 DB_PATH = "data/bot.db"
 
@@ -27,7 +27,7 @@ class Database:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER,
                     devices INTEGER,
-                    expires_at TEXT,
+                    expires_at INTEGER,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             """)
@@ -54,27 +54,19 @@ class Database:
             """)
             await db.commit()
 
+    # ---------- users ----------
     async def get_user(self, user_id: int):
         async with aiosqlite.connect(self.path) as db:
             db.row_factory = aiosqlite.Row
+            await db.execute(
+                "INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,)
+            )
+            await db.commit()
             async with db.execute(
                 "SELECT * FROM users WHERE user_id = ?", (user_id,)
             ) as cur:
                 row = await cur.fetchone()
-                if row:
-                    return dict(row)
-            await db.execute(
-                "INSERT INTO users (user_id) VALUES (?)", (user_id,)
-            )
-            await db.commit()
-            return {
-                "user_id": user_id,
-                "balance": 0,
-                "devices": 0,
-                "warnings": 0,
-                "banned": 0,
-                "total_deposited": 0,
-            }
+                return dict(row) if row else None
 
     async def update_user(self, user_id: int, **kwargs):
         if not kwargs:
@@ -88,25 +80,27 @@ class Database:
             )
             await db.commit()
 
-    async def add_devices(self, user_id: int, amount: int):
+    async def add_devices(self, user_id: int, amount: int) -> int:
         user = await self.get_user(user_id)
         new_dev = max(0, user["devices"] + amount)
         await self.update_user(user_id, devices=new_dev)
         return new_dev
 
-    async def add_balance(self, user_id: int, amount: float, type_: str, detail: str = ""):
+    async def add_balance(self, user_id: int, amount: float,
+                          type_: str, detail: str = "") -> float:
         user = await self.get_user(user_id)
         new_bal = user["balance"] + amount
         await self.update_user(user_id, balance=new_bal)
         async with aiosqlite.connect(self.path) as db:
             await db.execute(
-                "INSERT INTO transactions (user_id, amount, type, detail) VALUES (?, ?, ?, ?)",
+                "INSERT INTO transactions (user_id, amount, type, detail) "
+                "VALUES (?, ?, ?, ?)",
                 (user_id, amount, type_, detail),
             )
             await db.commit()
         return new_bal
 
-    async def add_warning(self, user_id: int):
+    async def add_warning(self, user_id: int) -> int:
         user = await self.get_user(user_id)
         new_warn = user["warnings"] + 1
         await self.update_user(user_id, warnings=new_warn)
@@ -117,10 +111,43 @@ class Database:
     async def set_ban(self, user_id: int, banned: bool):
         await self.update_user(user_id, banned=1 if banned else 0)
 
-    async def log_attack(self, user_id: int, target: str, port: int, duration: int, module: str):
+    # ---------- rentals ----------
+    async def add_rental(self, user_id: int, devices: int, expires_at_ts: int):
         async with aiosqlite.connect(self.path) as db:
             await db.execute(
-                "INSERT INTO attacks (user_id, target, port, duration, module) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO device_rentals (user_id, devices, expires_at) "
+                "VALUES (?, ?, ?)",
+                (user_id, devices, expires_at_ts),
+            )
+            await db.commit()
+
+    async def pop_expired_rentals(self):
+        now = int(time.time())
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM device_rentals WHERE expires_at <= ?", (now,)
+            ) as cur:
+                rows = [dict(r) for r in await cur.fetchall()]
+            for r in rows:
+                await db.execute(
+                    "UPDATE users SET devices = MAX(0, devices - ?) "
+                    "WHERE user_id = ?",
+                    (r["devices"], r["user_id"]),
+                )
+                await db.execute(
+                    "DELETE FROM device_rentals WHERE id = ?", (r["id"],)
+                )
+            await db.commit()
+        return rows
+
+    # ---------- attacks ----------
+    async def log_attack(self, user_id: int, target: str, port: int,
+                         duration: int, module: str):
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                "INSERT INTO attacks (user_id, target, port, duration, module) "
+                "VALUES (?, ?, ?, ?, ?)",
                 (user_id, target, port, duration, module),
             )
             await db.commit()
