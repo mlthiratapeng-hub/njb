@@ -64,7 +64,7 @@ class DeviceRequestButton(discord.ui.Button):
             label="ขอ Device",
             style=discord.ButtonStyle.secondary,
             custom_id="device_request",
-            emoji=EMOJI_PICK,   # string — discord.py parse เอง ปลอดภัยกว่า PartialEmoji.from_str
+            emoji=EMOJI_PICK,   # discord.py parse string ให้เอง
         )
         self.allowed_user_id = allowed_user_id
 
@@ -105,7 +105,7 @@ class ModuleSelect(discord.ui.Select):
             )
             return
 
-        # เคลียร์ view ของ selector ก่อน (message.edit ใช้ HTTP API แยก ไม่กิน response)
+        # เคลียร์ view ผ่าน HTTP API — ไม่กิน interaction response
         try:
             await interaction.message.edit(view=None)
         except discord.HTTPException:
@@ -124,7 +124,7 @@ class ModuleView(discord.ui.View):
 
 
 # ============================================================
-# Attack panel (persistent)
+# Attack panel
 # ============================================================
 class AttackPanel(discord.ui.View):
     def __init__(self, allowed_user_id: int):
