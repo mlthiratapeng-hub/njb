@@ -1,25 +1,21 @@
 # truemoney.py
-"""
-TrueMoney รับซองอั่งเปา → เข้าเบอร์ที่กำหนด
-ใช้ API (เสถียรกว่า browser automation บน VPS headless)
-"""
+import re
 import aiohttp
 from config import TRUEMONEY_PHONE, TRUEMONEY_API_KEY
 
 
 class TrueMoneyClient:
-    def __init__(self, phone: str = TRUEMONEY_PHONE, api_key: str = TRUEMONEY_API_KEY):
+    def __init__(self, phone: str = TRUEMONEY_PHONE,
+                 api_key: str = TRUEMONEY_API_KEY):
         self.phone = phone
         self.api_key = api_key
         self.base = "https://gift.truemoney.com/campaign/vouchers"
 
     async def redeem(self, gift_link: str) -> dict:
-        """
-        รับซองจากลิงก์ แล้วคืน {'success': bool, 'amount': float, 'raw': dict}
-        """
         voucher = self._extract_voucher(gift_link)
         if not voucher:
-            return {"success": False, "amount": 0, "raw": {"error": "invalid link"}}
+            return {"success": False, "amount": 0,
+                    "raw": {"error": "invalid link"}}
 
         headers = {
             "Content-Type": "application/json",
@@ -45,6 +41,5 @@ class TrueMoneyClient:
         return {"success": False, "amount": 0, "raw": data}
 
     def _extract_voucher(self, link: str) -> str | None:
-        import re
         m = re.search(r"v=([a-zA-Z0-9]+)", link)
         return m.group(1) if m else None
