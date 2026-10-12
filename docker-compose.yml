@@ -1,14 +1,18 @@
 version: "3.9"
 
 services:
-  mhddos:
-    # image: ghcr.io/mhprodev/mhddos:latest
+  bot:
     build: .
-    container_name: mhddos
+    container_name: njb-bot
     restart: unless-stopped
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - TM_API_KEY=${TM_API_KEY:-}
+      - MHDDOS_PATH=start.py
     volumes:
-      - ./config.json:/app/config.json
+      - ./data:/app/data
+      - ./assets:/app/assets
       - ./files:/app/files
-     
-    
-    
+    stdin_open: true
+    tty: true
+    stop_grace_period: 15s
