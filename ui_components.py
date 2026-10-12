@@ -1,7 +1,6 @@
 # ui_components.py
 import os
 import discord
-from discord import PartialEmoji
 from config import (
     BASE_DIR,
     EMOJI_DDOS_HEADER, EMOJI_CONTACT, EMOJI_RULES, EMOJI_ALLOWED,
@@ -9,7 +8,6 @@ from config import (
     EMOJI_SHOP_HEADER,
 )
 
-# H8: absolute path
 ASSET_ATTACK_BANNER  = os.path.join(BASE_DIR, "assets", "attack_banner.jpg")
 ASSET_ATTACK_RUNNING = os.path.join(BASE_DIR, "assets", "attack_running.jpg")
 ASSET_SHOP_BANNER    = os.path.join(BASE_DIR, "assets", "shop_banner.jpg")
@@ -66,7 +64,7 @@ class DeviceRequestButton(discord.ui.Button):
             label="ขอ Device",
             style=discord.ButtonStyle.secondary,
             custom_id="device_request",
-            emoji=PartialEmoji.from_str(EMOJI_PICK),
+            emoji=EMOJI_PICK,   # string — discord.py parse เอง ปลอดภัยกว่า PartialEmoji.from_str
         )
         self.allowed_user_id = allowed_user_id
 
@@ -106,11 +104,13 @@ class ModuleSelect(discord.ui.Select):
                 "ไม่ใช่คำสั่งของมึง", ephemeral=True
             )
             return
-        # M6: เคลียร์ view ก่อน — ต้องทำก่อน start_attack (defer)
+
+        # เคลียร์ view ของ selector ก่อน (message.edit ใช้ HTTP API แยก ไม่กิน response)
         try:
             await interaction.message.edit(view=None)
         except discord.HTTPException:
             pass
+
         from bot import start_attack
         await start_attack(interaction, self.values[0], self.target,
                            self.port, self.duration, self.devices)
@@ -132,7 +132,7 @@ class AttackPanel(discord.ui.View):
         self.add_item(DeviceRequestButton(allowed_user_id))
 
 
-# ── H7: with_image param ──
+# ── embeds ──
 def build_attack_embed(with_image: bool = True) -> discord.Embed:
     em = discord.Embed(
         title=f"{EMOJI_DDOS_HEADER} DDOS ATTACK",
@@ -212,9 +212,7 @@ class ShopView(discord.ui.View):
         from bot import db
         user = await db.get_user(interaction.user.id)
         if not user:
-            await interaction.response.send_message(
-                "DB error", ephemeral=True
-            )
+            await interaction.response.send_message("DB error", ephemeral=True)
             return
         await interaction.response.send_message(
             f"💰 มี **{user['balance']:.0f}💵**\n"
