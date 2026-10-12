@@ -1,3 +1,4 @@
+# ── MHDDoS dependencies ──
 cloudscraper==1.2.71
 certifi==2024.7.4
 dnspython==2.6.1
@@ -6,9 +7,11 @@ impacket==0.10.0
 psutil>=5.9.3
 icmplib>=2.1.1
 pyasn1==0.6.4
-pyroxy @ git+https://github.com/MatrixTM/PyRoxy.git
+pyroxy @ git+https://github.com/MatrixTM/PyRoxy.git@main
 yarl>=1.7.2
 PyJWT>=2.8.0
+
+# ── Discord bot (Python >= 3.10 required) ──
 discord.py>=2.4.0
 aiosqlite>=0.20.0
 aiohttp>=3.9.0
