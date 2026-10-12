@@ -1,8 +1,11 @@
 # database.py
-import aiosqlite
+import os
 import time
+import aiosqlite
+from config import BASE_DIR
 
-DB_PATH = "data/bot.db"
+# C5: absolute path — ไม่ขึ้นกับ cwd
+DB_PATH = os.path.join(BASE_DIR, "data", "bot.db")
 
 
 class Database:
@@ -10,6 +13,7 @@ class Database:
         self.path = path
 
     async def init(self):
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
         async with aiosqlite.connect(self.path) as db:
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS users (
@@ -118,6 +122,21 @@ class Database:
                 "INSERT INTO device_rentals (user_id, devices, expires_at) "
                 "VALUES (?, ?, ?)",
                 (user_id, devices, expires_at_ts),
+            )
+            await db.commit()
+
+    async def clear_rentals(self, user_id: int, amount: int):
+        """H3: ลด device ใน rental record เมื่อ owner ใช้ !device -N"""
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                "UPDATE device_rentals SET devices = MAX(0, devices - ?) "
+                "WHERE user_id = ?",
+                (amount, user_id),
+            )
+            await db.execute(
+                "DELETE FROM device_rentals "
+                "WHERE user_id = ? AND devices <= 0",
+                (user_id,),
             )
             await db.commit()
 
