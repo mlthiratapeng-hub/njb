@@ -78,17 +78,17 @@ class DeviceRequestButton(discord.ui.Button):
 
 
 # ============================================================
-# Module select + view
+# Module select + view (multi-vector modules)
 # ============================================================
 class ModuleSelect(discord.ui.Select):
     def __init__(self, user_id: int, target: str, port: int,
                  duration: int, devices: int):
         options = [
-            discord.SelectOption(label="มายคราฟ",     value="minecraft", emoji="⛏️"),
-            discord.SelectOption(label="โรบอค",        value="roblox",    emoji="🎮"),
-            discord.SelectOption(label="ห้องเสียงดิส", value="discord",   emoji="🔊"),
-            discord.SelectOption(label="ยิงเว็บ",      value="web",       emoji="🌐"),
-            discord.SelectOption(label="ฟีฟาย",       value="fivem",     emoji="🚔"),
+            discord.SelectOption(label="มายคราฟ",              value="minecraft", emoji="⛏️"),
+            discord.SelectOption(label="โรบอค",                 value="roblox",    emoji="🎮"),
+            discord.SelectOption(label="ฟีฟาย",                value="fivem",     emoji="🚔"),
+            discord.SelectOption(label="ยิงเว็บ",               value="web",       emoji="🌐"),
+            discord.SelectOption(label="ยิงเว็บ (Cloudflare)",  value="web_cf",    emoji="🔥"),
         ]
         super().__init__(placeholder="เลือกโมดูล", options=options,
                          custom_id="module_select")
@@ -164,9 +164,9 @@ def build_module_embed() -> discord.Embed:
             f"{EMOJI_ALLOWED} เลือกโมดูลให้ถูกด้วยนะจะได้ยิงให้ดับได้\n\n"
             "1. มายคราฟ\n"
             "2. โรบอค\n"
-            "3. ห้องเสียงดิส\n"
+            "3. ฟีฟาย\n"
             "4. ยิงเว็บ\n"
-            "5. ฟีฟาย"
+            "5. ยิงเว็บ (Cloudflare)"
         ),
     )
 
