@@ -78,7 +78,7 @@ class DeviceRequestButton(discord.ui.Button):
 
 
 # ============================================================
-# Module select + view (multi-vector modules)
+# Module select + view
 # ============================================================
 class ModuleSelect(discord.ui.Select):
     def __init__(self, user_id: int, target: str, port: int,
@@ -146,8 +146,7 @@ def build_attack_embed(with_image: bool = True) -> discord.Embed:
             f"เว็บอะไรต่างๆนอกเหนือจากเว็บที่ห้าม {EMOJI_BULLET}\n\n"
             f"ฟีฟาย {EMOJI_BULLET}\n"
             f"โรบอค {EMOJI_BULLET}\n"
-            f"มายคราฟ {EMOJI_BULLET}\n"
-            f"ห้องเสียงดิส {EMOJI_BULLET}\n\n"
+            f"มายคราฟ {EMOJI_BULLET}\n\n"
             f"หากจะยิงอะไรต่างๆโปรดเลือก Module ให้ถูก {EMOJI_MODULE}"
         ),
     )
