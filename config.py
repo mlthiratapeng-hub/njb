@@ -18,31 +18,41 @@ MHDDOS_PATH = os.getenv("MHDDOS_PATH", "start.py")
 MHDDOS_FULL = os.path.join(BASE_DIR, MHDDOS_PATH)
 MHDDOS_DIR  = os.path.dirname(MHDDOS_FULL)
 
-# Proxy
-PROXY_SOURCE_URL      = "https://proxy5.net/th/free-proxy/thailand"
-PROXY_UPDATE_INTERVAL = 1800
-PROXY_CACHE_FILE      = os.path.join(BASE_DIR, "data", "proxies_cache.txt")
-PROXIES_PER_DEVICE    = 5
+# ── Attack power ──
+SUB_NODES_PER_DEVICE = 5      # 1 device → 5 sub-process
+THREADS_PER_SUB_NODE = 500    # ต่อ sub-process
+RPC_PER_SUB_NODE     = 128    # requests per connection
+
+# ── Proxy ──
+PROXY_SOURCES = [
+    "https://proxy5.net/th/free-proxy/thailand/socks5",
+    "https://proxy5.net/th/free-proxy/thailand/http",
+]
+PROXY_FETCH_TIMEOUT  = 45     # ยาวขึ้น — รอ source ตอบ
+PROXY_VALIDATE_TIMEOUT = 5
+PROXY_VALIDATE_CONCURRENCY = 150
+PROXY_UPDATE_INTERVAL = 600   # refresh ทุก 10 นาที
+PROXY_CACHE_FILE = os.path.join(BASE_DIR, "data", "proxies_cache.txt")
+PROXIES_PER_SUB_NODE = 20     # เป้า — proxy ต่อ 1 sub-node
 
 
-def proxy_attack_file(user_id: int) -> str:
-    """ไฟล์ proxy แยกตาม user — ป้องกันชนกันระหว่าง attack"""
-    return os.path.join(BASE_DIR, "data", f"proxies_attack_{user_id}.txt")
+def proxy_slice_file(user_id: int, index: int) -> str:
+    """ไฟล์ proxy แยกต่อ (user, sub-node)"""
+    return os.path.join(BASE_DIR, "data", f"px_{user_id}_{index}.txt")
 
 
-# Attack limits
+# ── Limits ──
 MAX_DURATION = 300
 MIN_DEVICES = 1
 MAX_DEVICES_PURCHASE = 5
 
-# Forbidden targets
+# ── Forbidden ──
 FORBIDDEN_TLDS = [".th", ".gov"]
 FORBIDDEN_IPS  = ["127.0.0.1", "localhost", "0.0.0.0"]
 
-# Warning
 MAX_WARNINGS = 3
 
-# Emojis — animated (<a:...) ต้องคงไว้ ห้ามลบ
+# ── Emojis ──
 EMOJI_DDOS_HEADER   = "<a:1000035910:1559173862820810803>"
 EMOJI_CONTACT       = "<:1000035915:1559174417097953340>"
 EMOJI_SHOP_HEADER   = "<:1000035915:1559174417097953340>"
