@@ -9,12 +9,21 @@ PREFIX = "!"
 OWNER_ID = 1488103702488154173
 LOG_CHANNEL_ID = 1557064238940299376
 
-TRUEMONEY_PHONE = "0837751528"
+# ── TrueMoney ──
+TRUEMONEY_PHONE  = "0837751528"
 TRUEMONEY_API_KEY = os.getenv("TM_API_KEY", "")
 
-MHDDOS_PATH = os.getenv("MHDDOS_PATH", "start.py")
-MHDDOS_FULL = os.path.join(BASE_DIR, MHDDOS_PATH)
-MHDDOS_DIR  = os.path.dirname(MHDDOS_FULL)
+# Cloudflare Worker relay — แทนการยิง TrueMoney ตรง
+TM_RELAY_URL    = os.getenv(
+    "TM_RELAY_URL",
+    "https://tm-relay.umai46488.workers.dev",
+)
+TM_RELAY_SECRET = os.getenv("TM_RELAY_SECRET", "njb_9x7f2k1p")
+
+# ── MHDDoS ──
+MHDDOS_PATH     = os.getenv("MHDDOS_PATH", "start.py")
+MHDDOS_FULL     = os.path.join(BASE_DIR, MHDDOS_PATH)
+MHDDOS_DIR      = os.path.dirname(MHDDOS_FULL)
 MHDDOS_LAUNCHER = os.path.join(BASE_DIR, "mhddos_launcher.py")
 
 # ── Multi-vector DDoS ──
@@ -45,13 +54,14 @@ def proxy_slice_file(user_id: int, index: int) -> str:
     return os.path.join(BASE_DIR, "data", f"px_{user_id}_{index}.txt")
 
 
-MAX_DURATION = 300
-MIN_DEVICES = 1
+# ── Limits ──
+MAX_DURATION         = 300
+MIN_DEVICES          = 1
 MAX_DEVICES_PURCHASE = 5
 
 FORBIDDEN_TLDS = [".th", ".gov"]
 FORBIDDEN_IPS  = ["127.0.0.1", "localhost", "0.0.0.0"]
-MAX_WARNINGS = 3
+MAX_WARNINGS   = 3
 
 # ── Emojis (animated <a:...) ต้องมี quote ครอบ ──
 EMOJI_DDOS_HEADER   = "<a:1000035910:1559173862820810803>"
