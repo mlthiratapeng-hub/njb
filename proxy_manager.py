@@ -77,14 +77,13 @@ class ProxyManager:
 
     def write_for_devices(self, user_id: int, devices: int) -> int:
         """
-        เขียน proxy ลงไฟล์แยกตาม user_id
-        คืนจำนวน proxy ที่เขียน (0 = ไม่มี → caller ต้องแจ้ง user)
+        เขียน proxy ลงไฟล์แยกตาม user
+        - ถ้า pool ว่าง → เขียนไฟล์เปล่า (MHDDoS ยิงตรง ไม่ใช้ proxy)
+        - return จำนวน proxy ที่เขียน (0 = ไฟล์เปล่า, ยังใช้ได้)
         """
         need = max(PROXIES_PER_DEVICE, devices * PROXIES_PER_DEVICE)
         pool = self.proxies or self._load_cache()
-        if not pool:
-            return 0
-        selected = pool[:need]
+        selected = pool[:need] if pool else []
         try:
             with open(proxy_attack_file(user_id), "w") as f:
                 f.write("\n".join(selected))
