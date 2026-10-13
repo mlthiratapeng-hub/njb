@@ -42,7 +42,6 @@ active_attacks: dict[int, dict] = {}
 
 _http: aiohttp.ClientSession | None = None
 
-# N3/N4: guard re-fire ของ on_ready
 _proxy_loop_started = False
 _views_registered = False
 
@@ -64,7 +63,6 @@ def is_owner(user_id: int) -> bool:
 
 
 def _extract_host(target: str) -> str:
-    """ดึง hostname จาก target — รองรับ URL, IPv4, IPv6 [::1]:80"""
     t = target.strip().lower()
     if "://" in t:
         return urlparse(t).hostname or ""
@@ -142,12 +140,10 @@ async def on_ready():
             timeout=aiohttp.ClientTimeout(total=5)
         )
 
-    # N3: spawn proxy loop แค่ครั้งเดียว
     if not _proxy_loop_started:
         asyncio.create_task(proxy_mgr.auto_refresh_loop())
         _proxy_loop_started = True
 
-    # N4: add_view แค่ครั้งเดียว
     if not _views_registered:
         bot.add_view(AttackPanel(OWNER_ID))
         bot.add_view(ShopView())
@@ -291,14 +287,8 @@ async def start_attack(interaction: discord.Interaction, module: str,
 
     await interaction.response.defer(ephemeral=True)
 
-    # proxy
-    n = proxy_mgr.write_for_devices(user_id, devices)
-    if n == 0:
-        await interaction.followup.send(
-            "⚠️ ยังโหลด proxy ไม่เสร็จ — รอ 30 วิ แล้วลองใหม่",
-            ephemeral=True,
-        )
-        return
+    # proxy — เขียนไฟล์แยกตาม user (ไฟล์เปล่า = ยิงตรง ไม่ใช้ proxy)
+    proxy_mgr.write_for_devices(user_id, devices)
 
     # spawn
     try:
@@ -310,7 +300,7 @@ async def start_attack(interaction: discord.Interaction, module: str,
         )
         return
 
-    # N1: ครอบ log + followup — ถ้า fail → cleanup orphan
+    # ครอบ log + followup — ถ้า fail → cleanup orphan
     try:
         try:
             await db.log_attack(user_id, target, port, duration, module)
@@ -361,7 +351,6 @@ async def _attack_loop(user_id: int, state: dict):
             elapsed = time.time() - state["start"]
             left = max(0, duration - int(elapsed))
 
-            # 1) ครบเวลา → success
             if left <= 0:
                 await engine.stop(user_id)
                 active_attacks.pop(user_id, None)
@@ -375,7 +364,6 @@ async def _attack_loop(user_id: int, state: dict):
                     pass
                 return
 
-            # 2) process ตายก่อนเวลา
             if proc.returncode is not None:
                 engine.running.pop(user_id, None)
                 active_attacks.pop(user_id, None)
@@ -389,7 +377,6 @@ async def _attack_loop(user_id: int, state: dict):
                     pass
                 return
 
-            # 3) update
             if is_l4:
                 speed = "N/A (L4)"
             else:
@@ -403,7 +390,6 @@ async def _attack_loop(user_id: int, state: dict):
             try:
                 await msg.edit(embed=embed)
             except discord.NotFound:
-                # N2: message ถูกลบ → หยุด + kill subprocess
                 await engine.stop(user_id)
                 active_attacks.pop(user_id, None)
                 return
@@ -695,7 +681,7 @@ async def topup_cmd(ctx, link: str = None):
 
 
 # ============================================================
-# Signal handler — terminate subprocess ตอน bot ปิด
+# Signal handler
 # ============================================================
 def _install_signal_handlers():
     def _shutdown(sig, frame):
@@ -712,7 +698,6 @@ def _install_signal_handlers():
         signal.signal(signal.SIGINT, _shutdown)
         signal.signal(signal.SIGTERM, _shutdown)
     except ValueError:
-        # ไม่ได้รันใน main thread — ข้าม
         pass
 
 
