@@ -22,7 +22,7 @@ def build_panel():
 
 class PanelButton(discord.ui.Button):
     def __init__(self):
-        super().__init__(label="ขอ Device", style=discord.ButtonStyle.secondary,
+        super().__init__(label="Botnet", style=discord.ButtonStyle.secondary,
                          custom_id="panel_req")
     async def callback(self, interaction):
         from bot import open_attack_modal
