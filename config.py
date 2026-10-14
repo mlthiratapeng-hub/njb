@@ -11,7 +11,7 @@ OWNER_ID = 1488103702488154173
 MAX_DURATION = 350
 
 # ── API ──
-API_KEY  = os.getenv("API_KEY", "CHANGE_ME_SECRET")
+API_KEY  = os.getenv("API_KEY", "kuy")
 API_BASE = "http://127.0.0.1:8000"
 MAX_CONC = 10
 
