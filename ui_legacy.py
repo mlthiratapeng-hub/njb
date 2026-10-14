@@ -137,7 +137,7 @@ def build_running(method, target, port, left, total, speed, hits=0):
 
 def build_finished(method, target, port, total, hits=0):
     em = discord.Embed(
-        title="✅ ยิงเสร็จแล้ว",
+        title="ยิงเสร็จแล้ว",
         color=discord.Color.green(),
         description=(
             f"**IP:URL :** `{target}`\n"
