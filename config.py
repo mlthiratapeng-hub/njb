@@ -1,3 +1,4 @@
+
 # config.py
 import os
 
@@ -10,12 +11,12 @@ OWNER_ID = 1488103702488154173
 MAX_DURATION = 350
 
 # ── API ──
-API_KEY    = os.getenv("API_KEY", "CHANGE_ME_SECRET")
-API_BASE   = "http://127.0.0.1:8000"
-MAX_CONC   = 10
+API_KEY  = os.getenv("API_KEY", "CHANGE_ME_SECRET")
+API_BASE = "http://127.0.0.1:8000"
+MAX_CONC = 10
 
-# ── Paths ──
-MHDDOS_DIR = os.path.expanduser("~/MHDDoS")
+# ── Paths (fix C2: MHDDoS อยู่ที่ repo root ของตัวเอง) ──
+MHDDOS_DIR = os.getenv("MHDDOS_DIR", BASE_DIR)
 PROXY_FILE = os.path.join(BASE_DIR, "methods", "proxy.txt")
 DATA_DIR   = os.path.join(BASE_DIR, "data")
 DB_PATH    = os.path.join(DATA_DIR, "bot.db")
@@ -24,13 +25,12 @@ DB_PATH    = os.path.join(DATA_DIR, "bot.db")
 FORBIDDEN_TLDS = []
 FORBIDDEN_IPS  = ["127.0.0.1", "localhost", "0.0.0.0"]
 
-# ── Panel emojis ──
+# ── Panel emojis (fix C1: เติมครบ) ──
 EMOJI_HEADER  = "<a:1000030144:1559280351254151199>"
 EMOJI_CONTACT = "<:1000035915:1559174417097953340>"
 EMOJI_ALLOWED = "<:1000039016:1559632194668855366>"
 EMOJI_BUTTON  = "<:1000039019:1559634993997942834>"
 
-# ── Categories ──
 E_AUTO_L7      = "<a:1000030144:1559280351254151199>"
 E_AUTO_L4      = "<a:1000030144:1559280351254151199>"
 E_HTTPS_BYPASS = "<a:1000030144:1559280351254151199>"
@@ -97,17 +97,15 @@ L4_EMOJI = {
 
 # ── Custom methods ──
 CUSTOM_EMOJI = {
-    "L7-AUTO":       E_AUTO_L7,
-    "L4-AUTO":       E_AUTO_L4,
-    "HTTPS-BYPASS":  E_HTTPS_BYPASS,
-    "HTTPS":         E_HTTPS,
-    "DDOS-BROWSER":  E_BROWSER,
-    "TLS":           E_TLS,
-    "VC-DISCORD":    E_VC,
-    "FREEFIRE":      E_FF,
+    "HTTPS-BYPASS": E_HTTPS_BYPASS,
+    "HTTPS":        E_HTTPS,
+    "DDOS-BROWSER": E_BROWSER,
+    "TLS":          E_TLS,
+    "VC-DISCORD":   E_VC,
+    "FREEFIRE":     E_FF,
 }
 
-L7_METHODS = list(L7_EMOJI.keys())
-L4_METHODS = list(L4_EMOJI.keys())
+L7_METHODS     = list(L7_EMOJI.keys())
+L4_METHODS     = list(L4_EMOJI.keys())
 CUSTOM_METHODS = list(CUSTOM_EMOJI.keys())
-ALL_METHODS = L7_METHODS + L4_METHODS + CUSTOM_METHODS
+ALL_METHODS    = L7_METHODS + L4_METHODS + CUSTOM_METHODS
