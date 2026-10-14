@@ -1,13 +1,21 @@
 {
-  "MCBOT": "MHDDoS_",
-  "MINECRAFT_DEFAULT_PROTOCOL": 47,
   "proxy-providers": [
-
-		{"type":4, "url": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/refs/heads/master/socks4.txt",  "timeout": 5},
-
-		{"type":5, "url": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/refs/heads/master/socks5.txt",  "timeout": 5},
-
-		{"type":1, "url": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",  "timeout": 5}
-		
-	]
+    {
+      "type": 5,
+      "url": "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt",
+      "timeout": 5
+    },
+    {
+      "type": 4,
+      "url": "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks4.txt",
+      "timeout": 5
+    },
+    {
+      "type": 1,
+      "url": "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
+      "timeout": 5
+    }
+  ],
+  "proxy-file": "methods/proxy.txt",
+  "rpc": 128
 }
