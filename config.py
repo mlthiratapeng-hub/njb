@@ -1,4 +1,3 @@
-
 # config.py
 import os
 
@@ -15,7 +14,7 @@ API_KEY  = os.getenv("API_KEY", "kuy")
 API_BASE = "http://127.0.0.1:8000"
 MAX_CONC = 10
 
-# ── Paths (fix C2: MHDDoS อยู่ที่ repo root ของตัวเอง) ──
+# ── Paths ──
 MHDDOS_DIR = os.getenv("MHDDOS_DIR", BASE_DIR)
 PROXY_FILE = os.path.join(BASE_DIR, "methods", "proxy.txt")
 DATA_DIR   = os.path.join(BASE_DIR, "data")
@@ -25,7 +24,7 @@ DB_PATH    = os.path.join(DATA_DIR, "bot.db")
 FORBIDDEN_TLDS = []
 FORBIDDEN_IPS  = ["127.0.0.1", "localhost", "0.0.0.0"]
 
-# ── Panel emojis (fix C1: เติมครบ) ──
+# ── Panel emojis ──
 EMOJI_HEADER  = "<a:1000030144:1559280351254151199>"
 EMOJI_CONTACT = "<:1000035915:1559174417097953340>"
 EMOJI_ALLOWED = "<:1000039016:1559632194668855366>"
