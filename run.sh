@@ -6,7 +6,6 @@ cd "$(dirname "$0")"
 
 # fix C2: MHDDOS_DIR = repo root (ที่เดียวกับ start.py)
 export MHDDOS_DIR="${MHDDOS_DIR:-$(pwd)}"
-export API_KEY="${API_KEY:-CHANGE_ME_SECRET}"
 export BOT_TOKEN="${BOT_TOKEN:-}"
 
 echo "[RUN] MHDDOS_DIR = $MHDDOS_DIR"
