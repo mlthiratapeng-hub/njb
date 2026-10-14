@@ -6,11 +6,19 @@ from config import (
     L7_EMOJI, L4_EMOJI, CUSTOM_EMOJI, L7_METHODS, L4_METHODS,
 )
 
+# ── V2 flags ──
+V2_FLAGS = discord.MessageFlags.components_v2
+
+
+def _wrap(view) -> dict:
+    """ห่อ LayoutView เป็น dict สำหรับ **kwargs"""
+    return {"view": view, "flags": V2_FLAGS}
+
 
 # ═══════════════════════════════════════════
 # Panel
 # ═══════════════════════════════════════════
-def build_panel() -> ui.LayoutView:
+def build_panel() -> dict:
     v = ui.LayoutView(timeout=None)
     c = ui.Container()
     c.add_item(ui.TextDisplay(f"# {EMOJI_HEADER} **Botnet Attack**"))
@@ -26,7 +34,7 @@ def build_panel() -> ui.LayoutView:
         "เซิร์ฟ ฟีฟาย\nเซิร์ฟ มายคราฟ\nห้องเสียงDiscord"))
     c.add_item(ui.ActionRow().add_item(PanelButton()))
     v.add_item(c)
-    return v
+    return _wrap(v)
 
 
 class PanelButton(ui.Button):
@@ -79,7 +87,7 @@ class CatButton(ui.Button):
                                 self.target, self.port, self.dur)
 
 
-def build_category_view(uid, target, port, dur) -> ui.LayoutView:
+def build_category_view(uid, target, port, dur) -> dict:
     v = ui.LayoutView(timeout=300)
     c = ui.Container()
     c.add_item(ui.TextDisplay("# เลือกหมวดการยิง"))
@@ -104,7 +112,7 @@ def build_category_view(uid, target, port, dur) -> ui.LayoutView:
     c.add_item(row2)
 
     v.add_item(c)
-    return v
+    return _wrap(v)
 
 
 # ═══════════════════════════════════════════
@@ -141,7 +149,7 @@ def _rows(methods, emoji_map, uid, target, port, dur, style, per=5):
     return rows
 
 
-def build_method_view(cat, uid, target, port, dur) -> ui.LayoutView:
+def build_method_view(cat, uid, target, port, dur) -> dict:
     v = ui.LayoutView(timeout=300)
     c = ui.Container()
 
@@ -169,13 +177,13 @@ def build_method_view(cat, uid, target, port, dur) -> ui.LayoutView:
     for r in _rows(methods, emap, uid, target, port, dur, style):
         c.add_item(r)
     v.add_item(c)
-    return v
+    return _wrap(v)
 
 
 # ═══════════════════════════════════════════
 # Running
 # ═══════════════════════════════════════════
-def build_running(method, target, port, left, total, speed, hits=0) -> ui.LayoutView:
+def build_running(method, target, port, left, total, speed, hits=0) -> dict:
     v = ui.LayoutView(timeout=None)
     c = ui.Container()
     c.add_item(ui.TextDisplay("# Attack Launched Successfully"))
@@ -191,4 +199,4 @@ def build_running(method, target, port, left, total, speed, hits=0) -> ui.Layout
         f"[+] Slot      : 0/1\n"
         f"```"))
     v.add_item(c)
-    return v
+    return _wrap(v)
